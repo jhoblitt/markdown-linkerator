@@ -137,7 +137,11 @@ func (p *Pipeline) parseSource(ctx context.Context, src srcItem, d *dedup, jobsC
 }
 
 func (p *Pipeline) handleTarget(ctx context.Context, t model.Target, anchors map[string]bool, d *dedup, jobsCh chan<- *model.CheckJob) {
-	if checker.IsIgnored(t.URL, p.cfg) {
+	// Ignore patterns target the link as written (e.g. "^http://host:port",
+	// "^quickstart.md$"), so match the raw link as well as the resolved URL —
+	// the latter is a filesystem path for file links and would never match a
+	// URL-shaped pattern.
+	if checker.IsIgnored(t.Raw, p.cfg) || checker.IsIgnored(t.URL, p.cfg) {
 		p.coll.Add(model.Result{Target: t, State: model.StateIgnored})
 		return
 	}

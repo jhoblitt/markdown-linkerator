@@ -179,9 +179,10 @@ func (c *HTTPChecker) retryAfterTooLong(resp *http.Response) bool {
 	return ok && c.cfg.BackoffMax > 0 && d > c.cfg.BackoffMax
 }
 
-// backoff honors a 429/503 Retry-After (clamped to [min, max]) and otherwise
-// applies exponential backoff with jitter. The honored value is recorded on the
-// request's retryState for the pipeline's per-host cooldown.
+// backoff honors a 429/503 Retry-After (as sent, capped at BackoffMax) and
+// otherwise applies exponential backoff with jitter between RetryWaitMin and
+// BackoffMax. The honored Retry-After is recorded on the request's retryState
+// for the pipeline's per-host cooldown.
 func (c *HTTPChecker) backoff(lo, hi time.Duration, attemptNum int, resp *http.Response) time.Duration {
 	if resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable) {
 		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
@@ -190,11 +191,15 @@ func (c *HTTPChecker) backoff(lo, hi time.Duration, attemptNum int, resp *http.R
 					st.retryAfter = d
 				}
 			}
-			if d < lo {
-				d = lo
+			// Honor the server's Retry-After as sent, capped only by BackoffMax.
+			// It must NOT be floored to RetryWaitMin (the exponential-backoff
+			// minimum) — a "Retry-After: 1" forced up to a 30s floor would make
+			// every 429 needlessly slow.
+			if d < 0 {
+				d = 0
 			}
 			if hi > 0 && d > hi {
-				d = hi // BackoffMax is the ceiling; it wins even over the floor
+				d = hi
 			}
 			return d
 		}
