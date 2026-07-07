@@ -20,15 +20,28 @@ jobs:
   actionlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: actionlint
-        uses: raven-actions/actionlint@v2
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
 
-  pinact:
+  pin-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Verify actions are SHA-pinned
-        uses: suzuki-shunsuke/pinact-action@v1
-        with:
-          mode: check
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Verify every action is pinned to a full commit SHA
+        # Equivalent to `pinact run --check --no-api`: every `uses:` ref must end
+        # in a 40-char SHA (local `./` and `docker://` refs are exempt).
+        run: |
+          fail=0
+          while IFS= read -r ref; do
+            case "$ref" in
+              ./*|.|docker://*) continue ;;
+            esac
+            sha=${ref##*@}
+            if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{40}$'; then
+              echo "::error::not SHA-pinned: $ref"
+              fail=1
+            fi
+          done < <(grep -rhoE '^\s*(-\s*)?uses:\s*\S+' .github/ | sed -E 's/.*uses:\s*//')
+          [ "$fail" -eq 0 ] && echo "All action refs are SHA-pinned."
+          exit $fail
