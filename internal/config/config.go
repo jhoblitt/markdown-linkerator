@@ -98,7 +98,6 @@ func Defaults() Config {
 		PerHostBurst:       2,
 		URLWorkers:         10,
 		ParseWorkers:       10,
-		MaxRetries:         4,
 		BackoffMax:         NewDuration(2 * time.Minute),
 		UserAgent:          DefaultUserAgent,
 		MaxRedirects:       &eight,

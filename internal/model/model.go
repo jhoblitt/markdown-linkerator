@@ -102,8 +102,8 @@ type Target struct {
 type Result struct {
 	Target     Target
 	State      State
-	StatusCode int    // HTTP code, or synthetic (200 fs-exists, 400 fs-missing, anchor)
-	Host       string // hostname for http targets, for per-host accounting
+	StatusCode int           // HTTP code, or synthetic (200 fs-exists, 400 fs-missing, anchor)
+	Host       string        // hostname for http targets, for per-host accounting
 	Retries    int           // number of retries the checker performed
 	Saw429     bool          // a 429 was observed (drives the host AIMD penalty)
 	RetryAfter time.Duration // observed Retry-After, if any, for the host cooldown
@@ -119,6 +119,16 @@ type CheckJob struct {
 	Key    string // normalized dedup/cache key
 	Host   string
 	Sample Target // a representative occurrence used to perform the check
+}
+
+// HostStat is the per-host accounting reported at the end of a run. It lives in
+// model so the ratelimit and report packages share it without a dependency edge.
+type HostStat struct {
+	Host        string
+	Requests    int64
+	Retries     int64
+	N429        int64
+	ObservedRPS float64
 }
 
 // NormalizeKey returns the canonical dedup/cache key for a URL: lowercased

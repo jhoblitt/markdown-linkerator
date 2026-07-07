@@ -1,0 +1,35 @@
+# Native markdown-linkerator config. Same schema as the drop-in JSON, plus the
+# extended keys for rate limiting, worker pools, and caching.
+
+# --- parity keys (also accepted from a tcort .markdown-link-check.json) ---
+aliveStatusCodes: [200, 206]
+timeout: 5s
+retryOn429: true
+retryCount: 4
+ignorePatterns:
+  - pattern: "^https://internal\\.example\\.com"
+replacementPatterns:
+  - pattern: "^/"
+    replacement: "{{BASEURL}}/"
+projectBaseUrl: "https://example.org"
+
+# --- extended keys ---
+perHostRPS: 1
+perHostBurst: 2
+hostOverrides:
+  docs.ceph.com:
+    rps: 1
+    burst: 1
+urlWorkers: 10
+parseWorkers: 10
+maxRetries: 4
+backoffMax: 2m
+userAgent: "markdown-linkerator (+https://github.com/jhoblitt/markdown-linkerator)"
+maxRedirects: 8
+mailtoCheckMX: false
+errorFailsRun: false
+checkExternal: true
+cache:
+  enabled: true
+  path: .linkerator-cache.json
+  ttl: 24h

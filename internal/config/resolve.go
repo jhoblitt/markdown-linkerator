@@ -74,7 +74,7 @@ func (c Config) Resolve() (Resolved, error) {
 		HostOverrides:      d.HostOverrides,
 		URLWorkers:         d.URLWorkers,
 		ParseWorkers:       d.ParseWorkers,
-		MaxRetries:         d.MaxRetries,
+		MaxRetries:         resolveMaxRetries(d),
 		BackoffMax:         d.BackoffMax.Or(2 * time.Minute),
 		UserAgent:          d.UserAgent,
 		MaxRedirects:       Int(d.MaxRedirects, 8),
@@ -105,6 +105,18 @@ func (c Config) Resolve() (Resolved, error) {
 		})
 	}
 	return r, nil
+}
+
+// resolveMaxRetries folds the tcort `retryCount` into the retry limit: an
+// explicit maxRetries wins, else retryCount, else 4.
+func resolveMaxRetries(d Config) int {
+	if d.MaxRetries > 0 {
+		return d.MaxRetries
+	}
+	if n := Int(d.RetryCount, 0); n > 0 {
+		return n
+	}
+	return 4
 }
 
 func codeSet(codes []int) map[int]bool {

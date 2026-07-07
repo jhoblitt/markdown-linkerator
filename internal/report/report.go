@@ -1,0 +1,248 @@
+// Package report aggregates link-check results from concurrent workers and
+// renders a deterministic, CI-diffable summary at the end of a run. It also
+// computes the process exit code: a dead link (or an errored one when the
+// config opts in) fails the run; ignored links never do.
+package report
+
+import (
+	"fmt"
+	"io"
+	"sort"
+	"sync"
+
+	"github.com/jhoblitt/markdown-linkerator/internal/config"
+	"github.com/jhoblitt/markdown-linkerator/internal/model"
+)
+
+// Options controls how a Collector renders its report.
+type Options struct {
+	Quiet   bool      // print only dead/errored links, no summary chrome
+	Verbose bool      // append status codes and detail to each link line
+	Format  string    // "text" (default) or "json"
+	Out     io.Writer // render destination; nil is treated as io.Discard
+	NoColor bool      // disable ANSI color (the NO_COLOR env var is also honored)
+}
+
+// Summary is the machine-readable outcome of a run, returned by Finish.
+type Summary struct {
+	Total    int
+	Alive    int
+	Dead     int
+	Ignored  int
+	Errored  int
+	ExitCode int              // 1 if Dead>0 or (ErrorFailsRun && Errored>0), else 0
+	Results  []model.Result   // sorted by SourceFile, then Line, then URL
+	Hosts    []model.HostStat // sorted by Host
+}
+
+// Collector buffers results during a streaming run and renders the final
+// report. The zero value is not usable; construct one with NewCollector.
+type Collector struct {
+	cfg  config.Resolved
+	opts Options
+
+	mu      sync.Mutex
+	results []model.Result
+}
+
+// NewCollector returns a Collector that renders to opts.Out and uses cfg for
+// the exit-code policy (ErrorFailsRun).
+func NewCollector(cfg config.Resolved, opts Options) *Collector {
+	if opts.Out == nil {
+		opts.Out = io.Discard
+	}
+	return &Collector{cfg: cfg, opts: opts}
+}
+
+// Add records one result. It is safe for concurrent use by many workers and
+// intentionally does not print: streaming output would be nondeterministic.
+func (c *Collector) Add(r model.Result) {
+	c.mu.Lock()
+	c.results = append(c.results, r)
+	c.mu.Unlock()
+}
+
+// Finish sorts the buffered results, renders the report to Options.Out, and
+// returns the Summary. hostStats is rendered as a per-host section (text,
+// non-quiet only), sorted by host.
+func (c *Collector) Finish(hostStats []model.HostStat) Summary {
+	c.mu.Lock()
+	results := make([]model.Result, len(c.results))
+	copy(results, c.results)
+	c.mu.Unlock()
+
+	sortResults(results)
+
+	hosts := make([]model.HostStat, len(hostStats))
+	copy(hosts, hostStats)
+	sort.Slice(hosts, func(i, j int) bool { return hosts[i].Host < hosts[j].Host })
+
+	s := summarize(results, hosts, c.cfg.ErrorFailsRun)
+
+	switch c.opts.Format {
+	case "json":
+		c.renderJSON(s)
+	default:
+		c.renderText(s)
+	}
+	return s
+}
+
+func summarize(results []model.Result, hosts []model.HostStat, errorFails bool) Summary {
+	s := Summary{Total: len(results), Results: results, Hosts: hosts}
+	for _, r := range results {
+		switch r.State {
+		case model.StateAlive:
+			s.Alive++
+		case model.StateDead:
+			s.Dead++
+		case model.StateIgnored:
+			s.Ignored++
+		case model.StateError:
+			s.Errored++
+		}
+	}
+	if s.Dead > 0 || (errorFails && s.Errored > 0) {
+		s.ExitCode = 1
+	}
+	return s
+}
+
+func sortResults(rs []model.Result) {
+	sort.SliceStable(rs, func(i, j int) bool {
+		a, b := rs[i].Target, rs[j].Target
+		if a.SourceFile != b.SourceFile {
+			return a.SourceFile < b.SourceFile
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		return a.URL < b.URL
+	})
+}
+
+func (c *Collector) renderText(s Summary) {
+	p := newPalette(c.opts.NoColor)
+	w := c.opts.Out
+
+	if s.Total == 0 {
+		if !c.opts.Quiet {
+			fmt.Fprintln(w, "No hyperlinks found!")
+		}
+		return
+	}
+
+	c.renderFileGroups(w, p, s.Results)
+
+	if c.opts.Quiet {
+		return
+	}
+
+	renderHosts(w, p, s.Hosts)
+	fmt.Fprintf(w, "  %d link(s) checked.\n", s.Total)
+	if s.Dead > 0 {
+		renderDeadBlock(w, p, s)
+	}
+}
+
+// renderFileGroups prints links grouped by source file. In quiet mode a file
+// is printed only when it has at least one failure, and only its failing links.
+func (c *Collector) renderFileGroups(w io.Writer, p palette, results []model.Result) {
+	for _, g := range groupByFile(results) {
+		lines := g
+		if c.opts.Quiet {
+			if lines = failuresOnly(g); len(lines) == 0 {
+				continue
+			}
+		}
+		fmt.Fprintln(w, p.cyan("FILE: "+lines[0].Target.SourceFile))
+		for _, r := range lines {
+			c.renderLink(w, p, r)
+		}
+	}
+}
+
+func (c *Collector) renderLink(w io.Writer, p palette, r model.Result) {
+	line := "  " + colorGlyph(p, r.State) + " " + r.Target.URL
+	if c.opts.Verbose {
+		line += fmt.Sprintf(" → Status: %d", r.StatusCode)
+		if d := detailText(r); d != "" {
+			line += " — " + d
+		}
+	}
+	fmt.Fprintln(w, line)
+}
+
+func renderHosts(w io.Writer, p palette, hosts []model.HostStat) {
+	if len(hosts) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, p.cyan("Hosts:"))
+	for _, h := range hosts {
+		fmt.Fprintf(w, "  %s  %d requests  %.2f req/s  %d retries  %d unresolved-429\n",
+			h.Host, h.Requests, h.ObservedRPS, h.Retries, h.N429)
+	}
+	fmt.Fprintln(w)
+}
+
+func renderDeadBlock(w io.Writer, p palette, s Summary) {
+	fmt.Fprintln(w, p.red(fmt.Sprintf("ERROR: %d dead link(s) found!", s.Dead)))
+	for _, r := range s.Results {
+		if r.State != model.StateDead {
+			continue
+		}
+		fmt.Fprintf(w, "  %s %s → Status: %d\n", colorGlyph(p, r.State), r.Target.URL, r.StatusCode)
+	}
+}
+
+func groupByFile(results []model.Result) [][]model.Result {
+	var groups [][]model.Result
+	for _, r := range results {
+		if n := len(groups); n > 0 && groups[n-1][0].Target.SourceFile == r.Target.SourceFile {
+			groups[n-1] = append(groups[n-1], r)
+			continue
+		}
+		groups = append(groups, []model.Result{r})
+	}
+	return groups
+}
+
+func failuresOnly(rs []model.Result) []model.Result {
+	var out []model.Result
+	for _, r := range rs {
+		if r.State == model.StateDead || r.State == model.StateError {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func colorGlyph(p palette, s model.State) string {
+	g := s.Glyph()
+	switch s {
+	case model.StateAlive:
+		return p.green(g)
+	case model.StateDead:
+		return p.red(g)
+	case model.StateError:
+		return p.yellow(g)
+	default:
+		return p.dim(g)
+	}
+}
+
+// detailText is the human-readable context for a result, combining the
+// explicit Detail with any fatal Err. Used by verbose text and json output.
+func detailText(r model.Result) string {
+	switch {
+	case r.Detail != "" && r.Err != nil:
+		return r.Detail + ": " + r.Err.Error()
+	case r.Detail != "":
+		return r.Detail
+	case r.Err != nil:
+		return r.Err.Error()
+	default:
+		return ""
+	}
+}
