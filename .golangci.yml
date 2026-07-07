@@ -1,0 +1,42 @@
+# golangci-lint v2 configuration.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose
+    - misspell
+    - revive
+    - unconvert
+    - errorlint
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+    errcheck:
+      # Writes to output streams are the tool's product; a failed write to
+      # stdout/stderr is not actionable.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+  exclusions:
+    generated: lax
+    rules:
+      # Test files may use dot-imports and skip some checks.
+      - path: _test\.go
+        linters:
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/jhoblitt/markdown-linkerator

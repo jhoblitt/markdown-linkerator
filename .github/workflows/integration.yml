@@ -1,0 +1,60 @@
+name: Integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Weekly non-gating check against a small curated set of real URLs.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build binary
+        run: go build -o dist/markdown-linkerator ./cmd/markdown-linkerator
+      - name: End-to-end tests (hermetic, local test server)
+        run: go test -tags=e2e ./e2e/...
+
+  smoke-offline:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build binary
+        run: go build -o dist/markdown-linkerator ./cmd/markdown-linkerator
+      - name: Version
+        run: ./dist/markdown-linkerator --version
+      - name: Offline smoke (file + anchor links only)
+        run: ./dist/markdown-linkerator --check-external=false testdata/tree
+
+  smoke-external:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build binary
+        run: go build -o dist/markdown-linkerator ./cmd/markdown-linkerator
+      - name: External smoke (non-gating)
+        run: ./dist/markdown-linkerator --rate 1 testdata/external-allowlist.md
