@@ -72,6 +72,29 @@ func TestLoadTcortDropIn(t *testing.T) {
 	assert.Equal(t, 1, *c.RetryCount)
 }
 
+// TestLoadRookLegacyFixture parses rook's actual markdown-link-check config
+// (vendored verbatim) to guard the drop-in compatibility contract.
+func TestLoadRookLegacyFixture(t *testing.T) {
+	c, err := Load("../../testdata/configs/rook-mlc_config.json")
+	require.NoError(t, err)
+	assert.Len(t, c.IgnorePatterns, 8)
+	assert.Equal(t, "^http://host:port", c.IgnorePatterns[1].Pattern)
+	assert.Equal(t, "^quickstart\\.md$", c.IgnorePatterns[6].Pattern)
+	assert.Equal(t, []int{200, 206}, c.AliveStatusCodes)
+	assert.Equal(t, 5*time.Second, c.Timeout.D)
+	require.NotNil(t, c.RetryOn429)
+	assert.True(t, *c.RetryOn429)
+	require.NotNil(t, c.RetryCount)
+	assert.Equal(t, 1, *c.RetryCount)
+
+	// It resolves without error and folds retryCount into the retry limit.
+	r, err := c.Resolve()
+	require.NoError(t, err)
+	assert.Equal(t, 1, r.MaxRetries)
+	assert.True(t, r.AliveStatusCodes[206])
+	assert.Len(t, r.IgnorePatterns, 8) // all patterns compiled
+}
+
 // TestLoadNativeYAML proves the same struct parses native YAML with extended keys.
 func TestLoadNativeYAML(t *testing.T) {
 	dir := t.TempDir()
