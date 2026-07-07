@@ -190,11 +190,11 @@ func (c *HTTPChecker) backoff(lo, hi time.Duration, attemptNum int, resp *http.R
 					st.retryAfter = d
 				}
 			}
-			if hi > 0 && d > hi {
-				d = hi
-			}
 			if d < lo {
 				d = lo
+			}
+			if hi > 0 && d > hi {
+				d = hi // BackoffMax is the ceiling; it wins even over the floor
 			}
 			return d
 		}
@@ -207,6 +207,9 @@ func (c *HTTPChecker) backoff(lo, hi time.Duration, attemptNum int, resp *http.R
 func expJitterBackoff(lo, hi time.Duration, attemptNum int) time.Duration {
 	if lo <= 0 {
 		lo = time.Millisecond
+	}
+	if hi > 0 && lo > hi {
+		lo = hi // a floor above the ceiling would defeat BackoffMax
 	}
 	if hi < lo {
 		hi = lo
