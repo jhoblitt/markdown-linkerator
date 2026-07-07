@@ -1,0 +1,15 @@
+# Binaries and build output
+/markdown-linkerator
+/dist/
+*.exe
+
+# Local cache produced by the tool
+.linkerator-cache.json
+
+# Test / coverage artifacts
+*.out
+coverage.txt
+
+# Editor / OS cruft
+.DS_Store
+*.swp
