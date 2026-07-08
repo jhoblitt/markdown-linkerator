@@ -103,11 +103,14 @@ func expandGlob(pattern string) ([]string, error) {
 		return filepath.Glob(pattern)
 	}
 	idx := strings.Index(pattern, "**")
-	base := filepath.Dir(strings.TrimRight(pattern[:idx], string(os.PathSeparator)))
+	// The literal prefix before "**" is the walk root — NOT its parent. Using
+	// filepath.Dir here rooted "docs/**/*.md" at "." and scanned the whole repo.
+	base := strings.TrimRight(pattern[:idx], string(os.PathSeparator))
 	if base == "" {
 		base = "."
 	}
 	tail := strings.TrimLeft(pattern[idx+2:], string(os.PathSeparator))
+	hasSep := strings.ContainsRune(tail, os.PathSeparator)
 	var out []string
 	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, werr error) error {
 		if werr != nil {
@@ -119,11 +122,23 @@ func expandGlob(pattern string) ([]string, error) {
 			}
 			return nil
 		}
-		ok, merr := filepath.Match(tail, filepath.Base(p))
+		if tail == "" {
+			out = append(out, p)
+			return nil
+		}
+		// A tail without a separator (e.g. "*.md") matches any file's base name
+		// at any depth; a tail with a separator matches the path relative to base.
+		against := filepath.Base(p)
+		if hasSep {
+			if rel, rerr := filepath.Rel(base, p); rerr == nil {
+				against = rel
+			}
+		}
+		ok, merr := filepath.Match(tail, against)
 		if merr != nil {
 			return merr
 		}
-		if ok || tail == "" {
+		if ok {
 			out = append(out, p)
 		}
 		return nil

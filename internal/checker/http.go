@@ -44,6 +44,10 @@ func NewHTTPChecker(cfg config.Resolved) *HTTPChecker {
 	rc.CheckRetry = c.checkRetry
 	rc.Backoff = c.backoff
 	rc.RequestLogHook = requestLogHook
+	// Return the last response (e.g. a persistent 429) instead of the default
+	// behavior of closing it and returning only an error, so Check can classify
+	// the exhausted status rather than treating it as a transport failure.
+	rc.ErrorHandler = retryablehttp.PassthroughErrorHandler
 
 	// Reuse the pooled transport retryablehttp created; only override redirect
 	// policy and the per-attempt timeout.
@@ -63,6 +67,9 @@ func (c *HTTPChecker) Check(ctx context.Context, t model.Target) model.Result {
 	st := &retryState{}
 	rctx := withRetryState(ctx, st)
 
+	// With PassthroughErrorHandler, an exhausted 429/503 comes back as a normal
+	// response with err == nil, while genuine failures (redirect loop, transport)
+	// keep err != nil — so the err==nil branch classifies the status directly.
 	resp, err := c.do(rctx, http.MethodHead, t)
 	if err == nil {
 		code := resp.StatusCode
@@ -70,9 +77,16 @@ func (c *HTTPChecker) Check(ctx context.Context, t model.Target) model.Result {
 		if c.shortCircuit(code) {
 			return c.classify(res, code, st)
 		}
+		// A final rate-limit / unavailable status after HEAD's own retry handling
+		// is authoritative: a GET fallback would run a second retry cycle and
+		// amplify load against a host that is already throttling us.
+		if code == http.StatusTooManyRequests || code == http.StatusServiceUnavailable {
+			return c.classify(res, code, st)
+		}
 		// HEAD reached the server but is not clearly alive (405/401/404/...);
 		// retry the same URL with GET, whose status becomes authoritative.
 	} else if ctx.Err() != nil {
+		res.State = model.StateError
 		res.Err = ctx.Err()
 		return res
 	}
@@ -80,6 +94,7 @@ func (c *HTTPChecker) Check(ctx context.Context, t model.Target) model.Result {
 	resp, err = c.do(rctx, http.MethodGet, t)
 	if err != nil {
 		if ctx.Err() != nil {
+			res.State = model.StateError
 			res.Err = ctx.Err()
 			return res
 		}
@@ -263,13 +278,42 @@ func requestLogHook(_ retryablehttp.Logger, r *http.Request, attempt int) {
 	}
 }
 
+// ruleMatches reports whether a header rule applies to target. It requires an
+// exact origin (scheme + host:port) match before honoring any path prefix, so a
+// rule for https://api.github.com cannot leak its (possibly secret) headers to a
+// look-alike host like https://api.github.com.evil.example. A raw string prefix
+// — which markdown-link-check uses — is a credential-exfiltration vector.
 func ruleMatches(rule config.HeaderRule, target string) bool {
+	tu, err := url.Parse(target)
+	if err != nil {
+		return false
+	}
 	for _, u := range rule.URLs {
-		if u != "" && strings.HasPrefix(target, u) {
+		if u == "" {
+			continue
+		}
+		ru, err := url.Parse(u)
+		if err != nil {
+			continue
+		}
+		if !strings.EqualFold(ru.Scheme, tu.Scheme) || !strings.EqualFold(ru.Host, tu.Host) {
+			continue
+		}
+		if pathWithin(tu.Path, ru.Path) {
 			return true
 		}
 	}
 	return false
+}
+
+// pathWithin reports whether p is at or under the prefix path, respecting path
+// segment boundaries (so "/api" does not match "/apix").
+func pathWithin(p, prefix string) bool {
+	if prefix == "" || prefix == "/" {
+		return true
+	}
+	prefix = strings.TrimSuffix(prefix, "/")
+	return p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
 func drain(resp *http.Response) {

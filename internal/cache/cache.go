@@ -83,6 +83,9 @@ func New(path string, ttl time.Duration, enabled bool) (*Cache, error) {
 // transport errors, StateError, StateIgnored — is transient or request-specific
 // and must be re-checked next run. StateAlive is cacheable regardless of code.
 func Definitive(r model.Result) bool {
+	if r.Err != nil {
+		return false // a result carrying an error (e.g. cancellation) is never definitive
+	}
 	switch r.State {
 	case model.StateAlive:
 		return true
