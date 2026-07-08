@@ -6,10 +6,11 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestCacheFingerprintTokenScoped guards that the cache fingerprint is keyed by
-// which GitHub token was used, not merely whether one was present — so a result
-// checked with one token is never reused by a run with a different token.
-func TestCacheFingerprintTokenScoped(t *testing.T) {
+// TestCacheFingerprintTokenPresence guards that the cache fingerprint keys on
+// GitHub-token *presence* (auth vs unauth), not the token value. Keying on the
+// value would change the fingerprint every CI run (Actions rotates GITHUB_TOKEN)
+// and discard the cache cold, defeating cross-run caching.
+func TestCacheFingerprintTokenPresence(t *testing.T) {
 	base := Resolved{AliveStatusCodes: map[int]bool{200: true}, UserAgent: "ua", MaxRedirects: 8}
 
 	none := base
@@ -17,10 +18,9 @@ func TestCacheFingerprintTokenScoped(t *testing.T) {
 	tokA.GitHubToken = "ghp_AAA"
 	tokB := base
 	tokB.GitHubToken = "ghp_BBB"
-	tokA2 := base
-	tokA2.GitHubToken = "ghp_AAA"
 
-	assert.NotEqual(t, none.CacheFingerprint(), tokA.CacheFingerprint(), "authenticated vs unauthenticated must differ")
-	assert.NotEqual(t, tokA.CacheFingerprint(), tokB.CacheFingerprint(), "distinct tokens must produce distinct fingerprints")
-	assert.Equal(t, tokA.CacheFingerprint(), tokA2.CacheFingerprint(), "the same token must produce the same fingerprint")
+	assert.NotEqual(t, none.CacheFingerprint(), tokA.CacheFingerprint(),
+		"authenticated vs unauthenticated must differ")
+	assert.Equal(t, tokA.CacheFingerprint(), tokB.CacheFingerprint(),
+		"different token values must share a fingerprint, so a rotating CI token still hits the cache")
 }

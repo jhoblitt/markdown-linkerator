@@ -62,10 +62,12 @@ promise (the GitHub Action consumes the binary/image, not the source).
    poisons the next run. Never re-`Put` a `FromCache` result (it would refresh
    the TTL without a real check). The on-disk cache file carries a
    `CacheFingerprint()` of the request policy (alive codes, custom headers,
-   user-agent, base URL, redirect cap, and a non-reversible **digest of the
-   GitHub token** — not merely its presence, so results from one token are never
-   reused under a different one); a fingerprint mismatch on load discards the
-   cache so results are never reused across incompatible policies.
+   user-agent, base URL, redirect cap, and GitHub-token **presence** — auth vs
+   unauth, keyed on presence *not* value, because Actions rotates `GITHUB_TOKEN`
+   every run and value-keying would discard the cache cold each run and defeat
+   cross-run caching; the caveat is that a cache must not be shared across tokens
+   with different repo access); a fingerprint mismatch on load discards the cache
+   so results are never reused across incompatible policies.
 4. **Dedup keeps the channel graph acyclic.** Dedup is a mutex-guarded seen-map
    with per-URL state, not a goroutine in a channel cycle. A completing check
    fans its result out to every occurrence of the URL. Exactly-once emit is

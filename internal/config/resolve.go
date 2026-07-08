@@ -127,17 +127,14 @@ func (r Resolved) CacheFingerprint() string {
 		codes = append(codes, c)
 	}
 	sort.Ints(codes)
-	// Namespace by a non-reversible digest of the GitHub token, not merely its
-	// presence: a result checked with one token (which may see a private URL as
-	// alive, or be rate-limited differently) must not be reused by a run with a
-	// different token. Only the digest is folded into the fingerprint hash, so the
-	// token itself never lands in the cache file.
-	ghTok := ""
-	if r.GitHubToken != "" {
-		sum := sha256.Sum256([]byte(r.GitHubToken))
-		ghTok = hex.EncodeToString(sum[:])
-	}
-	fmt.Fprintf(h, "alive=%v;ua=%s;base=%s;redir=%d;mx=%t;gh=%s;", codes, r.UserAgent, r.ProjectBaseURL, r.MaxRedirects, r.MailtoCheckMX, ghTok)
+	// Namespace by whether a GitHub token is in use (auth vs unauth), NOT its
+	// value. GitHub Actions rotates GITHUB_TOKEN every run, so keying on the value
+	// would change the fingerprint every run and discard the on-disk cache cold,
+	// defeating cross-run caching (the headline feature). Consequence: a cache
+	// must not be shared across tokens with *different* repo access — a non-issue
+	// for public docs, whose links are reachable regardless of which token checks
+	// them, and bounded anyway by the cache TTL.
+	fmt.Fprintf(h, "alive=%v;ua=%s;base=%s;redir=%d;mx=%t;gh=%t;", codes, r.UserAgent, r.ProjectBaseURL, r.MaxRedirects, r.MailtoCheckMX, r.GitHubToken != "")
 	for _, rule := range r.HTTPHeaders {
 		urls := append([]string(nil), rule.URLs...)
 		sort.Strings(urls)
