@@ -41,7 +41,7 @@ func NewHTTPChecker(cfg config.Resolved) *HTTPChecker {
 
 	rc := retryablehttp.NewClient()
 	rc.Logger = nil // silence the default stderr logger
-	rc.RetryMax = cfg.MaxRetries
+	rc.RetryMax = max(cfg.MaxRetries, cfg.ConnectRetries)
 	rc.RetryWaitMin = orDefault(cfg.FallbackRetryDelay, time.Second)
 	rc.RetryWaitMax = orDefault(cfg.BackoffMax, 2*time.Minute)
 	rc.CheckRetry = c.checkRetry
@@ -203,6 +203,15 @@ func (c *HTTPChecker) checkRetry(ctx context.Context, resp *http.Response, err e
 		if errors.Is(err, errTooManyRedirects) {
 			return false, nil
 		}
+		// A connection-level failure (refused, reset, DNS, no route): retry a
+		// bounded few times quickly, then give up — don't sit in the long
+		// rate-limit backoff waiting on a socket that will never connect.
+		if st := retryStateFrom(ctx); st != nil {
+			st.transportFailures++
+			if st.transportFailures > c.cfg.ConnectRetries {
+				return false, nil
+			}
+		}
 		return true, nil
 	}
 	switch resp.StatusCode {
@@ -245,7 +254,10 @@ func (c *HTTPChecker) backoff(lo, hi time.Duration, attemptNum int, resp *http.R
 }
 
 func (c *HTTPChecker) computeBackoff(lo, hi time.Duration, attemptNum int, resp *http.Response) time.Duration {
-	if resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable) {
+	if resp == nil {
+		return connectBackoff(attemptNum) // connection failure: retry fast, not the rate-limit backoff
+	}
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
 		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
 			if resp.Request != nil {
 				if st := retryStateFrom(resp.Request.Context()); st != nil {
@@ -266,6 +278,16 @@ func (c *HTTPChecker) computeBackoff(lo, hi time.Duration, attemptNum int, resp 
 		}
 	}
 	return expJitterBackoff(lo, hi, attemptNum)
+}
+
+// connectBackoff is the short backoff between connection-failure retries: ~0.5s,
+// 1s, 2s (capped), so a refused socket fails in a few seconds, not minutes.
+func connectBackoff(attempt int) time.Duration {
+	d := 500 * time.Millisecond << min(attempt, 3)
+	if d > 3*time.Second {
+		d = 3 * time.Second
+	}
+	return d
 }
 
 // expJitterBackoff returns lo*2^attemptNum capped at hi, with full jitter in

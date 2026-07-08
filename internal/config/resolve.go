@@ -32,6 +32,7 @@ type Resolved struct {
 	URLWorkers     int
 	ParseWorkers   int
 	MaxRetries     int
+	ConnectRetries int
 	BackoffMax     time.Duration
 	UserAgent      string
 	MaxRedirects   int
@@ -80,6 +81,7 @@ func (c Config) Resolve() (Resolved, error) {
 		URLWorkers:         d.URLWorkers,
 		ParseWorkers:       d.ParseWorkers,
 		MaxRetries:         resolveMaxRetries(d),
+		ConnectRetries:     Int(d.ConnectRetries, 3),
 		BackoffMax:         d.BackoffMax.Or(2 * time.Minute),
 		UserAgent:          d.UserAgent,
 		MaxRedirects:       Int(d.MaxRedirects, 8),

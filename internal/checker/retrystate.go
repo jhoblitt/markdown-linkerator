@@ -11,9 +11,10 @@ import (
 // find it via the context they are handed. Each instance is touched only by the
 // single goroutine driving that request, so no locking is needed.
 type retryState struct {
-	retries    int
-	saw429     bool
-	retryAfter time.Duration
+	retries           int
+	saw429            bool
+	retryAfter        time.Duration
+	transportFailures int // connection-level failures (bounded separately from 429 retries)
 }
 
 type retryStateKey struct{}

@@ -3,14 +3,15 @@
 // loaded once at start, TTL-checked in memory, and written atomically at exit.
 //
 // Only definitive outcomes are cached (see Definitive): a live target, or a
-// target that is dead for a hard-dead reason. Transient failures — 429, any
-// 5xx, timeouts, transport errors — are never persisted, so one flaky run
-// cannot poison the next by pinning a URL as "dead".
+// target that is dead for a stable client-error (4xx) reason. Transient failures
+// — 408/425/429, any 5xx, timeouts, transport errors — are never persisted, so
+// one flaky run cannot poison the next by pinning a URL as "dead".
 package cache
 
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -96,12 +97,25 @@ func Definitive(r model.Result) bool {
 	case model.StateAlive:
 		return true
 	case model.StateDead:
-		switch r.StatusCode {
-		case 400, 404, 410:
-			return true
-		}
+		return stableClientError(r.StatusCode)
 	}
 	return false
+}
+
+// stableClientError reports whether a 4xx status is a stable client error worth
+// caching. The transient 4xx — 408 Request Timeout, 425 Too Early, 429 Too Many
+// Requests — are excluded so a rate-limited run cannot poison the next. 5xx and
+// transport errors (code 0) are server-side/transient and never cached.
+func stableClientError(code int) bool {
+	if code < 400 || code >= 500 {
+		return false
+	}
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return false
+	default:
+		return true
+	}
 }
 
 // Get returns a fresh entry (checked less than ttl ago) for key. ok is false on

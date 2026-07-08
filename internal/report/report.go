@@ -106,25 +106,17 @@ func (c *Collector) NetComplete(url string) {
 	c.mu.Unlock()
 }
 
-// updateGauges refreshes the heartbeat's in-flight count and the longest-running
-// active check. Caller holds mu.
+// updateGauges refreshes the heartbeat's in-flight count and the snapshot of
+// active checks (oldest first). Caller holds mu.
 func (c *Collector) updateGauges() {
 	c.live.inflight = c.enqueued - c.netDone
-	c.live.oldestURL = ""
-	c.live.oldestNote = ""
-	c.live.moreActive = 0
-	if len(c.active) == 0 {
-		return
-	}
-	var oldest *activeCheck
+	c.live.activeList = c.live.activeList[:0]
 	for u, a := range c.active {
-		if oldest == nil || a.since.Before(oldest.since) {
-			c.live.oldestURL, oldest = u, a
-		}
+		c.live.activeList = append(c.live.activeList, activeSnap{url: u, since: a.since, note: a.note})
 	}
-	c.live.oldestSince = oldest.since
-	c.live.oldestNote = oldest.note
-	c.live.moreActive = len(c.active) - 1
+	sort.Slice(c.live.activeList, func(i, j int) bool {
+		return c.live.activeList[i].since.Before(c.live.activeList[j].since)
+	})
 }
 
 // NewCollector returns a Collector that renders to opts.Out and uses cfg for
@@ -232,7 +224,6 @@ func (c *Collector) Finish(hostStats []model.HostStat) Summary {
 
 	if c.liveOn {
 		c.stopProgress()
-		c.live.clear()
 	}
 
 	switch c.opts.Format {

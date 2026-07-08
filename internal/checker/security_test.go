@@ -2,17 +2,47 @@ package checker
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jhoblitt/markdown-linkerator/internal/config"
 	"github.com/jhoblitt/markdown-linkerator/internal/model"
 	"github.com/jhoblitt/markdown-linkerator/internal/testserver"
 )
+
+// TestConnectionFailureBoundedFast guards that a connection failure retries a
+// bounded few times quickly and gives up, rather than sitting in the long
+// rate-limit backoff on a socket that will never connect.
+func TestConnectionFailureBoundedFast(t *testing.T) {
+	// A port that is bound then closed → connection refused, reliably.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	require.NoError(t, ln.Close())
+
+	c := NewHTTPChecker(config.Resolved{
+		AliveStatusCodes:   map[int]bool{200: true},
+		Timeout:            2 * time.Second,
+		MaxRedirects:       5,
+		MaxRetries:         4,
+		ConnectRetries:     2,
+		FallbackRetryDelay: 30 * time.Second, // the long rate-limit backoff must NOT be used here
+		BackoffMax:         2 * time.Minute,
+	})
+	start := time.Now()
+	res := c.Check(context.Background(), model.Target{URL: "http://" + addr + "/", Kind: model.KindHTTP})
+	elapsed := time.Since(start)
+
+	assert.Equal(t, model.StateDead, res.State)
+	assert.Equal(t, 0, res.StatusCode)
+	assert.Less(t, elapsed, 15*time.Second, "connection failures must fail fast, not sit in the rate-limit backoff")
+}
 
 // TestIsGitHubHost guards which hosts receive the GitHub token — GitHub's own
 // hosts (including subdomains and content CDNs), never a look-alike.

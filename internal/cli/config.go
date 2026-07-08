@@ -53,6 +53,9 @@ func configFromEnv() config.Config {
 	if v, ok := lookInt("LINKERATOR_RETRY_COUNT"); ok {
 		c.RetryCount = &v
 	}
+	if v, ok := lookInt("LINKERATOR_CONNECT_RETRIES"); ok {
+		c.ConnectRetries = &v
+	}
 	if v, ok := lookDuration("LINKERATOR_RETRY_MAX_WAIT"); ok {
 		c.BackoffMax = config.NewDuration(v)
 	}
@@ -128,6 +131,10 @@ func configFromFlags(cmd *cobra.Command) config.Config {
 	if fs.Changed("retry-count") {
 		v, _ := fs.GetInt("retry-count")
 		c.RetryCount = &v
+	}
+	if fs.Changed("connect-retries") {
+		v, _ := fs.GetInt("connect-retries")
+		c.ConnectRetries = &v
 	}
 	if fs.Changed("retry-max-wait") {
 		d, _ := fs.GetDuration("retry-max-wait")

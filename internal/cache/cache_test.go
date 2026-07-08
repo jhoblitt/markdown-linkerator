@@ -28,9 +28,9 @@ func writeCacheFile(t *testing.T, path string, f file) {
 	require.NoError(t, os.WriteFile(path, b, 0o644))
 }
 
-// TestDefinitive pins the caching policy: alive always, dead only for the hard-
-// dead codes, and nothing else. This is the rule that keeps a transient 429 or
-// 5xx from being persisted as "dead".
+// TestDefinitive pins the caching policy: alive always, dead for stable 4xx
+// client errors, and nothing else. This is the rule that keeps a transient
+// 408/425/429 or 5xx from being persisted as "dead".
 func TestDefinitive(t *testing.T) {
 	cases := []struct {
 		name string
@@ -41,10 +41,14 @@ func TestDefinitive(t *testing.T) {
 		{"alive-206", res(model.StateAlive, 206), true},
 		{"alive-no-code", res(model.StateAlive, 0), true},
 		{"dead-400", res(model.StateDead, 400), true},
+		{"dead-401", res(model.StateDead, 401), true},
+		{"dead-403", res(model.StateDead, 403), true},
 		{"dead-404", res(model.StateDead, 404), true},
+		{"dead-405", res(model.StateDead, 405), true},
 		{"dead-410", res(model.StateDead, 410), true},
-		{"dead-401-transient-auth", res(model.StateDead, 401), false},
-		{"dead-403-transient-auth", res(model.StateDead, 403), false},
+		{"dead-451", res(model.StateDead, 451), true},
+		{"dead-408-transient", res(model.StateDead, 408), false},
+		{"dead-425-transient", res(model.StateDead, 425), false},
 		{"dead-429-rate-limited", res(model.StateDead, 429), false},
 		{"dead-500", res(model.StateDead, 500), false},
 		{"dead-503", res(model.StateDead, 503), false},

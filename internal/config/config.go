@@ -63,18 +63,19 @@ type Config struct {
 	ProjectBaseURL      string               `json:"projectBaseUrl,omitempty"`
 
 	// --- extended native keys ---
-	PerHostRPS    float64              `json:"perHostRPS,omitempty"`
-	PerHostBurst  int                  `json:"perHostBurst,omitempty"`
-	HostOverrides map[string]HostLimit `json:"hostOverrides,omitempty"`
-	URLWorkers    int                  `json:"urlWorkers,omitempty"`
-	ParseWorkers  int                  `json:"parseWorkers,omitempty"`
-	MaxRetries    int                  `json:"maxRetries,omitempty"`
-	BackoffMax    Duration             `json:"backoffMax,omitempty"`
-	UserAgent     string               `json:"userAgent,omitempty"`
-	MaxRedirects  *int                 `json:"maxRedirects,omitempty"`
-	MailtoCheckMX bool                 `json:"mailtoCheckMX,omitempty"`
-	ErrorFailsRun bool                 `json:"errorFailsRun,omitempty"`
-	CheckExternal *bool                `json:"checkExternal,omitempty"`
+	PerHostRPS     float64              `json:"perHostRPS,omitempty"`
+	PerHostBurst   int                  `json:"perHostBurst,omitempty"`
+	HostOverrides  map[string]HostLimit `json:"hostOverrides,omitempty"`
+	URLWorkers     int                  `json:"urlWorkers,omitempty"`
+	ParseWorkers   int                  `json:"parseWorkers,omitempty"`
+	MaxRetries     int                  `json:"maxRetries,omitempty"`
+	ConnectRetries *int                 `json:"connectRetries,omitempty"`
+	BackoffMax     Duration             `json:"backoffMax,omitempty"`
+	UserAgent      string               `json:"userAgent,omitempty"`
+	MaxRedirects   *int                 `json:"maxRedirects,omitempty"`
+	MailtoCheckMX  bool                 `json:"mailtoCheckMX,omitempty"`
+	ErrorFailsRun  bool                 `json:"errorFailsRun,omitempty"`
+	CheckExternal  *bool                `json:"checkExternal,omitempty"`
 	// GitHubToken authenticates requests to GitHub hosts so a CI run is not
 	// throttled by the 60/hr unauthenticated limit. Never read from a config
 	// file (json:"-"); supply it via flag/env (defaulting to $GITHUB_TOKEN).
@@ -95,6 +96,7 @@ func Defaults() Config {
 	false_ := false
 	eight := 8
 	four := 4
+	three := 3
 	return Config{
 		AliveStatusCodes:   []int{200},
 		Timeout:            NewDuration(10 * time.Second),
@@ -105,6 +107,7 @@ func Defaults() Config {
 		PerHostBurst:       2,
 		URLWorkers:         10,
 		ParseWorkers:       10,
+		ConnectRetries:     &three,
 		BackoffMax:         NewDuration(2 * time.Minute),
 		UserAgent:          DefaultUserAgent,
 		MaxRedirects:       &eight,
@@ -190,6 +193,9 @@ func (c *Config) Merge(src Config) {
 	}
 	if src.MaxRetries != 0 {
 		c.MaxRetries = src.MaxRetries
+	}
+	if src.ConnectRetries != nil {
+		c.ConnectRetries = src.ConnectRetries
 	}
 	if src.BackoffMax.Set {
 		c.BackoffMax = src.BackoffMax
