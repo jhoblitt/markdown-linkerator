@@ -221,6 +221,20 @@ func stringValue(cmd *cobra.Command, flag, env, def string) string {
 	return def
 }
 
+// durationValue resolves a duration option: an explicitly-set flag wins, then
+// the env var, then the flag default.
+func durationValue(cmd *cobra.Command, flag, env string) time.Duration {
+	if cmd.Flags().Changed(flag) {
+		d, _ := cmd.Flags().GetDuration(flag)
+		return d
+	}
+	if v, ok := lookDuration(env); ok {
+		return v
+	}
+	d, _ := cmd.Flags().GetDuration(flag)
+	return d
+}
+
 func lookString(k string) (string, bool) {
 	v, ok := os.LookupEnv(k)
 	if !ok || v == "" {

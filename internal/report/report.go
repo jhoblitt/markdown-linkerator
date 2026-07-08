@@ -16,11 +16,16 @@ import (
 
 // Options controls how a Collector renders its report.
 type Options struct {
-	Quiet   bool      // print only dead/errored links, no summary chrome
-	Verbose bool      // append status codes and detail to each link line
-	Format  string    // "text" (default) or "json"
-	Out     io.Writer // render destination; nil is treated as io.Discard
-	NoColor bool      // disable ANSI color (the NO_COLOR env var is also honored)
+	Quiet    bool      // print only dead/errored links, no summary chrome
+	Verbose  bool      // append status codes and detail to each link line
+	Progress bool      // force the live progress heartbeat (on by default unless quiet/json)
+	Format   string    // "text" (default) or "json"
+	Out      io.Writer // render destination; nil is treated as io.Discard
+	// ProgressOut receives live progress (per-link under Verbose, else a throttled
+	// heartbeat) during the run so a long paced run is visibly alive rather than
+	// silent. Typically os.Stderr; nil disables live output.
+	ProgressOut io.Writer
+	NoColor     bool // disable ANSI color (the NO_COLOR env var is also honored)
 }
 
 // Summary is the machine-readable outcome of a run, returned by Finish.
@@ -43,6 +48,11 @@ type Collector struct {
 
 	mu      sync.Mutex
 	results []model.Result
+
+	live      liveProgress // live stderr feedback during the run
+	livePal   palette
+	liveOn    bool
+	streaming bool // Verbose: stream each link as it completes
 }
 
 // NewCollector returns a Collector that renders to opts.Out and uses cfg for
@@ -51,14 +61,35 @@ func NewCollector(cfg config.Resolved, opts Options) *Collector {
 	if opts.Out == nil {
 		opts.Out = io.Discard
 	}
-	return &Collector{cfg: cfg, opts: opts}
+	c := &Collector{cfg: cfg, opts: opts}
+	// Live output is enabled unless quiet or JSON; Verbose streams each link,
+	// otherwise a throttled heartbeat keeps a long paced run from looking hung.
+	c.liveOn = opts.ProgressOut != nil && !opts.Quiet && opts.Format != "json"
+	c.streaming = opts.Verbose
+	if c.liveOn {
+		c.livePal = newPalette(opts.NoColor)
+		c.live.init(opts.ProgressOut)
+	}
+	return c
 }
 
-// Add records one result. It is safe for concurrent use by many workers and
-// intentionally does not print: streaming output would be nondeterministic.
+// Add records one result. It is safe for concurrent use by many workers. It
+// buffers the result for the final sorted report and, when live output is
+// enabled, emits progress to ProgressOut.
 func (c *Collector) Add(r model.Result) {
 	c.mu.Lock()
 	c.results = append(c.results, r)
+	if r.State == model.StateDead {
+		c.live.dead++
+	}
+	c.live.checked++
+	if c.liveOn {
+		if c.streaming {
+			c.live.streamLine(c.livePal, r)
+		} else {
+			c.live.heartbeat(false)
+		}
+	}
 	c.mu.Unlock()
 }
 
@@ -78,6 +109,10 @@ func (c *Collector) Finish(hostStats []model.HostStat) Summary {
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].Host < hosts[j].Host })
 
 	s := summarize(results, hosts, c.cfg.ErrorFailsRun)
+
+	if c.liveOn {
+		c.live.clear()
+	}
 
 	switch c.opts.Format {
 	case "json":

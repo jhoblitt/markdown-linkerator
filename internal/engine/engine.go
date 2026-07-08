@@ -34,6 +34,12 @@ func Run(ctx context.Context, cfg config.Resolved, inputs []string, rep report.O
 	saveErr := c.Save()
 
 	summary := coll.Finish(p.Registry().AllStats())
+	// The pipeline collects canceled checks as errored results rather than
+	// aborting, so surface a deadline/cancellation here — a --max-time run that
+	// did not finish must not report success.
+	if runErr == nil {
+		runErr = ctx.Err()
+	}
 	if runErr != nil {
 		return &summary, runErr
 	}

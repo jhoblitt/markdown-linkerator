@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"time"
 )
 
 // Server wraps an httptest.Server with per-path request accounting so tests can
@@ -31,6 +32,7 @@ func New() *Server {
 	mux.HandleFunc("/partial", s.wrap(handlePartial))
 	mux.HandleFunc("/later", s.wrap(s.handleLater))
 	mux.HandleFunc("/toomany", s.wrap(handleTooMany)) // always 429, no Retry-After
+	mux.HandleFunc("/slow", s.wrap(handleSlow))       // sleeps, for deadline tests
 	mux.HandleFunc("/foo/redirect", s.wrap(handleRedirect("/foo/bar")))
 	mux.HandleFunc("/foo/bar", s.wrap(handleOK))
 	mux.HandleFunc("/redirect-with-body-in-head", s.wrap(handleRedirectWithBody("/")))
@@ -77,6 +79,14 @@ func handleOK(w http.ResponseWriter, _ *http.Request) {
 
 func handleTooMany(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusTooManyRequests)
+}
+
+func handleSlow(w http.ResponseWriter, r *http.Request) {
+	select {
+	case <-time.After(2 * time.Second):
+		w.WriteHeader(http.StatusOK)
+	case <-r.Context().Done():
+	}
 }
 
 func handleNoHead(w http.ResponseWriter, r *http.Request) {

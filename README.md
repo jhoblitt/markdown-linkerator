@@ -48,7 +48,13 @@ markdown-linkerator --cache --cache-ttl 24h docs/
 ```
 
 Exit code is `1` when any link is **dead**, `0` otherwise (ignored/errored links
-don't fail unless `--fail-on-error`).
+don't fail unless `--fail-on-error`); `2` when a run is interrupted or exceeds
+`--max-time`.
+
+Because requests are paced per host, a large tree can take minutes. Progress is
+written to **stderr** so a run is never silently "hung": a throttled heartbeat by
+default, or a live per-link stream under `-v`. Pipe stdout to capture just the
+final report.
 
 ### Flags
 
@@ -60,6 +66,7 @@ don't fail unless `--fail-on-error`).
 | `--rate` | `LINKERATOR_RATE` | `1` | per-host requests/second |
 | `--burst` | `LINKERATOR_BURST` | `2` | per-host burst |
 | `--timeout` | `LINKERATOR_TIMEOUT` | `10s` | per-request timeout |
+| `--max-time` | `LINKERATOR_MAX_TIME` | `0` | maximum total run time (0 = no limit); on expiry the run stops and exits 2 |
 | `--retry-on-429` | `LINKERATOR_RETRY_ON_429` | `true` | retry 429 honoring `Retry-After` |
 | `--retry-count` | `LINKERATOR_RETRY_COUNT` | `4` | max retries per URL |
 | `--retry-max-wait` | `LINKERATOR_RETRY_MAX_WAIT` | `2m` | cap on `Retry-After` wait |

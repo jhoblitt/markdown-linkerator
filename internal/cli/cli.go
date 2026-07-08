@@ -6,6 +6,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,6 +50,7 @@ func registerFlags(cmd *cobra.Command) {
 	f.Float64("rate", 1, "per-host requests per second")
 	f.Int("burst", 2, "per-host burst")
 	f.Duration("timeout", 10*time.Second, "per-request timeout")
+	f.Duration("max-time", 0, "maximum total run time, e.g. 5m (0 = no limit)")
 	f.Bool("retry-on-429", true, "retry on HTTP 429 honoring Retry-After")
 	f.BoolP("retry", "r", true, "alias for --retry-on-429")
 	f.Int("retry-count", 4, "max retries per URL")
@@ -78,11 +80,21 @@ func run(ctx context.Context, cmd *cobra.Command, args []string, exitCode *int) 
 	}
 
 	rep := report.Options{
-		Quiet:   boolValue(cmd, "quiet", "LINKERATOR_QUIET"),
-		Verbose: boolValue(cmd, "verbose", "LINKERATOR_VERBOSE"),
-		Format:  stringValue(cmd, "format", "LINKERATOR_FORMAT", "text"),
-		NoColor: boolValue(cmd, "no-color", "LINKERATOR_NO_COLOR"),
-		Out:     cmd.OutOrStdout(),
+		Quiet:       boolValue(cmd, "quiet", "LINKERATOR_QUIET"),
+		Verbose:     boolValue(cmd, "verbose", "LINKERATOR_VERBOSE"),
+		Progress:    boolValue(cmd, "progress", "LINKERATOR_PROGRESS"),
+		Format:      stringValue(cmd, "format", "LINKERATOR_FORMAT", "text"),
+		NoColor:     boolValue(cmd, "no-color", "LINKERATOR_NO_COLOR"),
+		Out:         cmd.OutOrStdout(),
+		ProgressOut: cmd.ErrOrStderr(),
+	}
+
+	// --max-time bounds the whole run: on expiry the context cancels, in-flight
+	// checks resolve as errors, and the run reports what it has with exit 2.
+	if d := durationValue(cmd, "max-time", "LINKERATOR_MAX_TIME"); d > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
 	}
 
 	summary, runErr := engine.Run(ctx, resolved, args, rep)
@@ -96,11 +108,16 @@ func run(ctx context.Context, cmd *cobra.Command, args []string, exitCode *int) 
 	}
 
 	if runErr != nil {
-		if ctx.Err() != nil {
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			*exitCode = 2
+			return fmt.Errorf("max-time exceeded: %w", runErr)
+		case ctx.Err() != nil:
 			*exitCode = 2
 			return fmt.Errorf("interrupted: %w", runErr)
+		default:
+			return runErr
 		}
-		return runErr
 	}
 	*exitCode = summary.ExitCode
 	return nil
