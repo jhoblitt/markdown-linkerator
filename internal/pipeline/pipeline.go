@@ -193,7 +193,7 @@ func (p *Pipeline) handleTarget(ctx context.Context, t model.Target, anchors map
 			p.coll.Add(r)
 		}
 		if job != nil {
-			p.coll.NetEnqueue()
+			p.coll.NetEnqueue(job.Host)
 			_ = send(ctx, jobsCh, job)
 		}
 	}
@@ -246,7 +246,7 @@ func (p *Pipeline) fileAnchors(path string) (map[string]bool, error) {
 func (p *Pipeline) execute(ctx context.Context, job *model.CheckJob, d *dedup) {
 	p.coll.NetStart(job.Sample.URL)
 	res := p.http.Check(ctx, job.Sample)
-	p.coll.NetComplete(job.Sample.URL)
+	p.coll.NetComplete(job.Sample.URL, job.Host)
 	hs := p.reg.Host(job.Host)
 	hs.Record(res.Retries)
 	switch {

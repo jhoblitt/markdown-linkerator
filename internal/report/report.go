@@ -52,11 +52,14 @@ type Collector struct {
 	results []model.Result
 
 	// Network-check gauges for the progress heartbeat, all under mu: enqueued
-	// counts dispatched jobs, netDone finished ones, and active tracks the URLs
-	// currently being checked (so a backoff stall names what it is waiting on).
-	enqueued int
-	netDone  int
-	active   map[string]*activeCheck
+	// counts dispatched jobs, netDone finished ones, active tracks the URLs
+	// currently being checked (so a backoff stall names what it is waiting on),
+	// and hostInflight is the per-host in-flight count so the heartbeat can show
+	// where the backlog is (e.g. many URLs queued behind one rate-limited host).
+	enqueued     int
+	netDone      int
+	active       map[string]*activeCheck
+	hostInflight map[string]int
 
 	live      liveProgress // live stderr feedback during the run
 	livePal   palette
@@ -67,9 +70,10 @@ type Collector struct {
 }
 
 // NetEnqueue records a dispatched network check (queued or in progress).
-func (c *Collector) NetEnqueue() {
+func (c *Collector) NetEnqueue(host string) {
 	c.mu.Lock()
 	c.enqueued++
+	c.hostInflight[host]++
 	c.mu.Unlock()
 }
 
@@ -99,10 +103,13 @@ func (c *Collector) NetStatus(url, note string) {
 }
 
 // NetComplete records a finished network check.
-func (c *Collector) NetComplete(url string) {
+func (c *Collector) NetComplete(url, host string) {
 	c.mu.Lock()
 	c.netDone++
 	delete(c.active, url)
+	if c.hostInflight[host]--; c.hostInflight[host] <= 0 {
+		delete(c.hostInflight, host)
+	}
 	c.mu.Unlock()
 }
 
@@ -117,6 +124,18 @@ func (c *Collector) updateGauges() {
 	sort.Slice(c.live.activeList, func(i, j int) bool {
 		return c.live.activeList[i].since.Before(c.live.activeList[j].since)
 	})
+	// Per-host in-flight, busiest first, so the heartbeat shows where the backlog
+	// is concentrated (the rate-limited hosts everything is queued behind).
+	c.live.hostBacklog = c.live.hostBacklog[:0]
+	for h, n := range c.hostInflight {
+		c.live.hostBacklog = append(c.live.hostBacklog, hostCount{host: h, n: n})
+	}
+	sort.Slice(c.live.hostBacklog, func(i, j int) bool {
+		if c.live.hostBacklog[i].n != c.live.hostBacklog[j].n {
+			return c.live.hostBacklog[i].n > c.live.hostBacklog[j].n
+		}
+		return c.live.hostBacklog[i].host < c.live.hostBacklog[j].host
+	})
 }
 
 // NewCollector returns a Collector that renders to opts.Out and uses cfg for
@@ -125,7 +144,7 @@ func NewCollector(cfg config.Resolved, opts Options) *Collector {
 	if opts.Out == nil {
 		opts.Out = io.Discard
 	}
-	c := &Collector{cfg: cfg, opts: opts, active: map[string]*activeCheck{}}
+	c := &Collector{cfg: cfg, opts: opts, active: map[string]*activeCheck{}, hostInflight: map[string]int{}}
 	// Live output is enabled unless quiet or a machine format; Verbose streams
 	// each link, otherwise a throttled heartbeat keeps a long paced run from
 	// looking hung.

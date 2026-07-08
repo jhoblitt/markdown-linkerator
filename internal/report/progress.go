@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jhoblitt/markdown-linkerator/internal/model"
@@ -12,13 +13,21 @@ import (
 // is in flight, so a paced multi-minute check is visibly working rather than
 // silent. It is only ever touched under the Collector's mutex.
 type liveProgress struct {
-	out        io.Writer
-	start      time.Time
-	last       time.Time
-	checked    int
-	dead       int
-	inflight   int          // network checks enqueued but not yet complete (the backlog)
-	activeList []activeSnap // every in-progress check, oldest first
+	out         io.Writer
+	start       time.Time
+	last        time.Time
+	checked     int
+	dead        int
+	inflight    int          // network checks enqueued but not yet complete (the backlog)
+	activeList  []activeSnap // every in-progress check, oldest first
+	hostBacklog []hostCount  // per-host in-flight, busiest first
+}
+
+// hostCount is a host and its in-flight network-check count, for the heartbeat's
+// backlog line.
+type hostCount struct {
+	host string
+	n    int
 }
 
 // activeSnap is a point-in-time view of one in-progress check for the heartbeat.
@@ -78,6 +87,27 @@ func (l *liveProgress) heartbeat(force bool) {
 	l.last = now
 	elapsed := now.Sub(l.start).Round(time.Second)
 	fmt.Fprintf(l.out, "checking… %d checked · %d in-flight · %d dead · %s elapsed\n", l.checked, l.inflight, l.dead, elapsed)
+	// Show where the in-flight work is concentrated — the busiest hosts, which
+	// are the rate-limited bottlenecks everything else is queued behind.
+	if l.inflight > 0 && len(l.hostBacklog) > 0 {
+		const topN = 6
+		var b strings.Builder
+		b.WriteString("  · in-flight by host: ")
+		shown := len(l.hostBacklog)
+		if shown > topN {
+			shown = topN
+		}
+		for i := 0; i < shown; i++ {
+			if i > 0 {
+				b.WriteString(" · ")
+			}
+			fmt.Fprintf(&b, "%s %d", l.hostBacklog[i].host, l.hostBacklog[i].n)
+		}
+		if rest := len(l.hostBacklog) - shown; rest > 0 {
+			fmt.Fprintf(&b, " (+%d more)", rest)
+		}
+		fmt.Fprintln(l.out, b.String())
+	}
 	for _, a := range l.activeList {
 		age := now.Sub(a.since).Round(time.Second)
 		if age < activeAgeThreshold {
