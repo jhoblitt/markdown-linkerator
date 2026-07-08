@@ -131,7 +131,7 @@ Use [`jhoblitt/markdown-linkerator-action`](https://github.com/jhoblitt/markdown
 which runs this tool and persists the URL cache across runs via `actions/cache`:
 
 ```yaml
-- uses: jhoblitt/markdown-linkerator-action@v1
+- uses: jhoblitt/markdown-linkerator-action@v0
   with:
     paths: "docs/**/*.md"
     rate: "1"
