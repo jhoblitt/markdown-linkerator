@@ -45,6 +45,33 @@ func TestConnectionFailureBoundedFast(t *testing.T) {
 	assert.Less(t, elapsed, 15*time.Second, "connection failures must fail fast, not sit in the rate-limit backoff")
 }
 
+// TestTimeoutBoundedNotRetried guards that a per-request timeout is bounded by a
+// single --timeout: it is not retried (each retry would cost another full
+// timeout), and a HEAD timeout does not fall through to a GET that times out
+// again. Regression for a 10s timeout taking ~50s over the retry+fallback path.
+func TestTimeoutBoundedNotRetried(t *testing.T) {
+	srv := testserver.New()
+	defer srv.Close()
+
+	c := NewHTTPChecker(config.Resolved{
+		AliveStatusCodes:   map[int]bool{200: true},
+		Timeout:            200 * time.Millisecond, // fires well before /slow's 2s response
+		MaxRedirects:       5,
+		MaxRetries:         4,
+		ConnectRetries:     3,
+		FallbackRetryDelay: 30 * time.Second,
+		BackoffMax:         2 * time.Minute,
+	})
+	start := time.Now()
+	res := c.Check(context.Background(), model.Target{URL: srv.URL("/slow"), Kind: model.KindHTTP})
+	elapsed := time.Since(start)
+
+	assert.Equal(t, model.StateDead, res.State)
+	assert.Equal(t, 0, res.StatusCode)
+	assert.Equal(t, 1, srv.Requests("/slow"), "a timeout must not be retried or fall through to GET")
+	assert.Lessf(t, elapsed, time.Second, "one 200ms timeout must bound the check, not multiply; took %s", elapsed)
+}
+
 // TestIsGitHubHost guards which hosts receive the GitHub token — GitHub's own
 // hosts (including subdomains and content CDNs), never a look-alike.
 func TestIsGitHubHost(t *testing.T) {

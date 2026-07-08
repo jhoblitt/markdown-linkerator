@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -91,6 +92,15 @@ func (c *HTTPChecker) Check(ctx context.Context, t model.Target) model.Result {
 	} else if ctx.Err() != nil {
 		res.State = model.StateError
 		res.Err = ctx.Err()
+		return res
+	} else if isTimeout(err) {
+		// A HEAD timeout means the host is hanging; a GET fallback would just
+		// time out again, doubling the wait. Treat it as dead now so the check
+		// is bounded by a single --timeout.
+		res.State = model.StateDead
+		res.StatusCode = 0
+		res.Detail = err.Error()
+		applyRetryState(&res, st)
 		return res
 	}
 
@@ -203,6 +213,13 @@ func (c *HTTPChecker) checkRetry(ctx context.Context, resp *http.Response, err e
 		if errors.Is(err, errTooManyRedirects) {
 			return false, nil
 		}
+		// A per-request timeout (--timeout) is not retried: each attempt already
+		// costs the full timeout, so retrying would multiply the wait (a 10s
+		// timeout became ~50s over the connect-retry budget), and a host that
+		// hangs once will almost certainly hang again. Bound it to one timeout.
+		if isTimeout(err) {
+			return false, nil
+		}
 		// A connection-level failure (refused, reset, DNS, no route): retry a
 		// bounded few times quickly, then give up — don't sit in the long
 		// rate-limit backoff waiting on a socket that will never connect.
@@ -289,6 +306,17 @@ func (c *HTTPChecker) computeBackoff(lo, hi time.Duration, attemptNum int, resp 
 		}
 	}
 	return expJitterBackoff(lo, hi, attemptNum)
+}
+
+// isTimeout reports whether err is a request timeout (the per-request
+// --timeout / Client.Timeout firing), as opposed to a fast connection failure.
+// It is distinct from run-context cancellation, which checkRetry handles first.
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // connectBackoff is the short backoff between connection-failure retries: ~0.5s,
