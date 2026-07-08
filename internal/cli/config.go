@@ -67,7 +67,7 @@ func configFromEnv() config.Config {
 		c.CheckFragments = &v
 	}
 	if v, ok := lookBool("LINKERATOR_MAILTO_CHECK_MX"); ok {
-		c.MailtoCheckMX = v
+		c.MailtoCheckMX = &v
 	}
 	if v, ok := lookString("LINKERATOR_BASE_URL"); ok {
 		c.ProjectBaseURL = v
@@ -95,7 +95,7 @@ func configFromEnv() config.Config {
 		c.Cache.TTL = config.NewDuration(v)
 	}
 	if v, ok := lookBool("LINKERATOR_FAIL_ON_ERROR"); ok {
-		c.ErrorFailsRun = v
+		c.ErrorFailsRun = &v
 	}
 	return c
 }
@@ -150,7 +150,8 @@ func configFromFlags(cmd *cobra.Command) config.Config {
 		c.CheckFragments = &v
 	}
 	if fs.Changed("mailto-check-mx") {
-		c.MailtoCheckMX, _ = fs.GetBool("mailto-check-mx")
+		v, _ := fs.GetBool("mailto-check-mx")
+		c.MailtoCheckMX = &v
 	}
 	if fs.Changed("project-base-url") {
 		c.ProjectBaseURL, _ = fs.GetString("project-base-url")
@@ -177,7 +178,8 @@ func configFromFlags(cmd *cobra.Command) config.Config {
 		c.Cache.TTL = config.NewDuration(d)
 	}
 	if fs.Changed("fail-on-error") {
-		c.ErrorFailsRun, _ = fs.GetBool("fail-on-error")
+		v, _ := fs.GetBool("fail-on-error")
+		c.ErrorFailsRun = &v
 	}
 	return c
 }

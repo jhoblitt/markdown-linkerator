@@ -85,8 +85,8 @@ func (c Config) Resolve() (Resolved, error) {
 		BackoffMax:         d.BackoffMax.Or(2 * time.Minute),
 		UserAgent:          d.UserAgent,
 		MaxRedirects:       Int(d.MaxRedirects, 8),
-		MailtoCheckMX:      d.MailtoCheckMX,
-		ErrorFailsRun:      d.ErrorFailsRun,
+		MailtoCheckMX:      Bool(d.MailtoCheckMX),
+		ErrorFailsRun:      Bool(d.ErrorFailsRun),
 		CheckExternal:      Bool(d.CheckExternal),
 		CheckFragments:     Bool(d.CheckFragments),
 		GitHubToken:        d.GitHubToken,
@@ -154,14 +154,12 @@ func (r Resolved) CacheFingerprint() string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// resolveMaxRetries folds the tcort `retryCount` into the retry limit: an
-// explicit maxRetries wins, else retryCount, else 4.
+// resolveMaxRetries returns the 429/503 retry limit from the retryCount layer
+// (Merge folds the native maxRetries alias into it, preserving precedence).
 func resolveMaxRetries(d Config) int {
-	if d.MaxRetries > 0 {
-		return d.MaxRetries
-	}
-	// Honor an explicitly-set retryCount, including 0 (disable retries); only
-	// fall back to the default when it was never set.
+	// maxRetries is folded into RetryCount by Merge, so there is a single source
+	// of truth with precedence preserved. Honor an explicit value, including 0
+	// (disable retries); a negative clamps to 0; else the default.
 	if d.RetryCount != nil {
 		if *d.RetryCount < 0 {
 			return 0

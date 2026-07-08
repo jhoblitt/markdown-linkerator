@@ -2,7 +2,9 @@ package extract
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"testing"
 
@@ -14,6 +16,14 @@ import (
 )
 
 const srcPath = "/home/u/proj/doc.md"
+
+// resolved mirrors how extract resolves a relative link to an absolute path, so
+// expectations hold on any OS — on Windows filepath.Abs adds a drive and
+// backslashes, which a hard-coded "/home/u/proj/..." literal would not match.
+func resolved(rel string) string {
+	p, _ := filepath.Abs(filepath.Join(filepath.Dir(srcPath), rel))
+	return p
+}
 
 func parse(t *testing.T, md string, cfg config.Resolved) FileLinks {
 	t.Helper()
@@ -50,7 +60,7 @@ func TestExtractInlineLinkAndImage(t *testing.T) {
 	img := fl.Targets[1]
 	assert.Equal(t, "pic.png", img.Raw)
 	assert.Equal(t, model.KindFileRel, img.Kind)
-	assert.Equal(t, "/home/u/proj/pic.png", img.URL)
+	assert.Equal(t, resolved("pic.png"), img.URL)
 }
 
 func TestExtractReferenceLink(t *testing.T) {
@@ -91,13 +101,13 @@ func TestExtractGFMBareAutolinks(t *testing.T) {
 func TestExtractRawHTMLInline(t *testing.T) {
 	md := "See <a href=\"http://raw.example.com\">x</a> and <img src=\"pic.png\"> end.\n"
 	fl := parse(t, md, config.Resolved{})
-	assert.Equal(t, []string{"/home/u/proj/pic.png", "http://raw.example.com"}, urls(fl.Targets))
+	assert.Equal(t, []string{resolved("pic.png"), "http://raw.example.com"}, urls(fl.Targets))
 }
 
 func TestExtractRawHTMLBlock(t *testing.T) {
 	md := "<div>\n<a href=\"http://block.example.com\">x</a>\n<img src=\"deep/pic.png\">\n</div>\n"
 	fl := parse(t, md, config.Resolved{})
-	assert.Equal(t, []string{"/home/u/proj/deep/pic.png", "http://block.example.com"}, urls(fl.Targets))
+	assert.Equal(t, []string{resolved("deep/pic.png"), "http://block.example.com"}, urls(fl.Targets))
 }
 
 func TestDedupKeepsFirstLine(t *testing.T) {
@@ -123,21 +133,25 @@ func TestClassify(t *testing.T) {
 		wantKind model.Kind
 		wantURL  string
 		wantFrag string
+		unixOnly bool // absolute-path / file:// semantics differ on Windows
 	}{
-		{"http", "http://x.example.com/p", model.KindHTTP, "http://x.example.com/p", ""},
-		{"https", "https://x.example.com", model.KindHTTP, "https://x.example.com", ""},
-		{"mailto", "mailto:a@b.com", model.KindMailto, "mailto:a@b.com", ""},
-		{"hash local", "#some-section", model.KindHashLocal, "#some-section", "some-section"},
-		{"relative file", "sub/other.md", model.KindFileRel, "/home/u/proj/sub/other.md", ""},
-		{"relative with fragment", "other.md#sec", model.KindFileRel, "/home/u/proj/other.md", "sec"},
-		{"dot relative", "./sibling.md", model.KindFileRel, "/home/u/proj/sibling.md", ""},
-		{"parent relative", "../up.md", model.KindFileRel, "/home/u/up.md", ""},
-		{"absolute path", "/etc/hosts", model.KindFileRel, "/etc/hosts", ""},
-		{"file scheme", "file:///tmp/f.txt", model.KindFileRel, "/tmp/f.txt", ""},
-		{"file scheme with fragment", "file:///tmp/f.md#frag", model.KindFileRel, "/tmp/f.md", "frag"},
+		{"http", "http://x.example.com/p", model.KindHTTP, "http://x.example.com/p", "", false},
+		{"https", "https://x.example.com", model.KindHTTP, "https://x.example.com", "", false},
+		{"mailto", "mailto:a@b.com", model.KindMailto, "mailto:a@b.com", "", false},
+		{"hash local", "#some-section", model.KindHashLocal, "#some-section", "some-section", false},
+		{"relative file", "sub/other.md", model.KindFileRel, resolved("sub/other.md"), "", false},
+		{"relative with fragment", "other.md#sec", model.KindFileRel, resolved("other.md"), "sec", false},
+		{"dot relative", "./sibling.md", model.KindFileRel, resolved("sibling.md"), "", false},
+		{"parent relative", "../up.md", model.KindFileRel, resolved("../up.md"), "", false},
+		{"absolute path", "/etc/hosts", model.KindFileRel, "/etc/hosts", "", true},
+		{"file scheme", "file:///tmp/f.txt", model.KindFileRel, "/tmp/f.txt", "", true},
+		{"file scheme with fragment", "file:///tmp/f.md#frag", model.KindFileRel, "/tmp/f.md", "frag", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			if c.unixOnly && runtime.GOOS == "windows" {
+				t.Skip("absolute-path / file:// resolution is Unix-specific")
+			}
 			tg := onlyTarget(t, "[x]("+c.dest+")\n", config.Resolved{})
 			assert.Equal(t, c.wantKind, tg.Kind)
 			assert.Equal(t, c.wantURL, tg.URL)

@@ -68,13 +68,13 @@ type Config struct {
 	HostOverrides  map[string]HostLimit `json:"hostOverrides,omitempty"`
 	URLWorkers     int                  `json:"urlWorkers,omitempty"`
 	ParseWorkers   int                  `json:"parseWorkers,omitempty"`
-	MaxRetries     int                  `json:"maxRetries,omitempty"`
+	MaxRetries     int                  `json:"maxRetries,omitempty"` // native alias for retryCount; Merge folds it in
 	ConnectRetries *int                 `json:"connectRetries,omitempty"`
 	BackoffMax     Duration             `json:"backoffMax,omitempty"`
 	UserAgent      string               `json:"userAgent,omitempty"`
 	MaxRedirects   *int                 `json:"maxRedirects,omitempty"`
-	MailtoCheckMX  bool                 `json:"mailtoCheckMX,omitempty"`
-	ErrorFailsRun  bool                 `json:"errorFailsRun,omitempty"`
+	MailtoCheckMX  *bool                `json:"mailtoCheckMX,omitempty"`
+	ErrorFailsRun  *bool                `json:"errorFailsRun,omitempty"`
 	CheckExternal  *bool                `json:"checkExternal,omitempty"`
 	// GitHubToken authenticates requests to GitHub hosts so a CI run is not
 	// throttled by the 60/hr unauthenticated limit. Never read from a config
@@ -111,6 +111,8 @@ func Defaults() Config {
 		BackoffMax:         NewDuration(2 * time.Minute),
 		UserAgent:          DefaultUserAgent,
 		MaxRedirects:       &eight,
+		MailtoCheckMX:      &false_,
+		ErrorFailsRun:      &false_,
 		CheckExternal:      &true_,
 		CheckFragments:     &true_,
 		Cache: CacheConfig{
@@ -159,6 +161,14 @@ func (c *Config) Merge(src Config) {
 	if src.RetryOn429 != nil {
 		c.RetryOn429 = src.RetryOn429
 	}
+	// retryCount (tcort) and maxRetries (native alias) both set the retry limit.
+	// Fold maxRetries in first so an explicit retryCount in the same or a later
+	// (higher-precedence) layer still overrides it — e.g. a file's maxRetries: 4
+	// must not defeat a flag/env retryCount: 0.
+	if src.MaxRetries != 0 {
+		v := src.MaxRetries
+		c.RetryCount = &v
+	}
 	if src.RetryCount != nil {
 		c.RetryCount = src.RetryCount
 	}
@@ -191,9 +201,6 @@ func (c *Config) Merge(src Config) {
 	if src.ParseWorkers != 0 {
 		c.ParseWorkers = src.ParseWorkers
 	}
-	if src.MaxRetries != 0 {
-		c.MaxRetries = src.MaxRetries
-	}
 	if src.ConnectRetries != nil {
 		c.ConnectRetries = src.ConnectRetries
 	}
@@ -206,11 +213,11 @@ func (c *Config) Merge(src Config) {
 	if src.MaxRedirects != nil {
 		c.MaxRedirects = src.MaxRedirects
 	}
-	if src.MailtoCheckMX {
-		c.MailtoCheckMX = true
+	if src.MailtoCheckMX != nil {
+		c.MailtoCheckMX = src.MailtoCheckMX
 	}
-	if src.ErrorFailsRun {
-		c.ErrorFailsRun = true
+	if src.ErrorFailsRun != nil {
+		c.ErrorFailsRun = src.ErrorFailsRun
 	}
 	if src.CheckExternal != nil {
 		c.CheckExternal = src.CheckExternal

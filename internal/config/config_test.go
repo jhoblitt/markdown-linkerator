@@ -154,6 +154,34 @@ func TestRetryCountZeroDisablesRetries(t *testing.T) {
 	assert.Equal(t, 4, unset.MaxRetries, "an unset retry-count falls back to the default")
 }
 
+func TestRetryCountZeroOverridesFileMaxRetries(t *testing.T) {
+	four, zero := 4, 0
+	c := Defaults()
+	c.Merge(Config{MaxRetries: four})  // native config file: maxRetries: 4
+	c.Merge(Config{RetryCount: &zero}) // higher layer (env/flag): retryCount: 0
+	r, err := c.Resolve()
+	require.NoError(t, err)
+	assert.Equal(t, 0, r.MaxRetries, "a later retryCount=0 must override a file's maxRetries")
+
+	// And a file's maxRetries still overrides the default when nothing overrides it.
+	c2 := Defaults()
+	c2.Merge(Config{MaxRetries: 7})
+	r2, err := c2.Resolve()
+	require.NoError(t, err)
+	assert.Equal(t, 7, r2.MaxRetries, "a file's maxRetries must win over the default")
+}
+
+func TestExplicitFalseOverridesFileTrue(t *testing.T) {
+	tru, fls := true, false
+	c := Defaults()
+	c.Merge(Config{ErrorFailsRun: &tru, MailtoCheckMX: &tru}) // config file: true
+	c.Merge(Config{ErrorFailsRun: &fls, MailtoCheckMX: &fls}) // env/flag: explicit false
+	r, err := c.Resolve()
+	require.NoError(t, err)
+	assert.False(t, r.ErrorFailsRun, "--fail-on-error=false must override a file's errorFailsRun: true")
+	assert.False(t, r.MailtoCheckMX, "mailto-check-mx=false must override a file's mailtoCheckMX: true")
+}
+
 func TestResolveConservativeDefaults(t *testing.T) {
 	r, err := Config{}.Resolve()
 	require.NoError(t, err)
