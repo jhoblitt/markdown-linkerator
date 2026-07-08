@@ -127,7 +127,17 @@ func (r Resolved) CacheFingerprint() string {
 		codes = append(codes, c)
 	}
 	sort.Ints(codes)
-	fmt.Fprintf(h, "alive=%v;ua=%s;base=%s;redir=%d;mx=%t;gh=%t;", codes, r.UserAgent, r.ProjectBaseURL, r.MaxRedirects, r.MailtoCheckMX, r.GitHubToken != "")
+	// Namespace by a non-reversible digest of the GitHub token, not merely its
+	// presence: a result checked with one token (which may see a private URL as
+	// alive, or be rate-limited differently) must not be reused by a run with a
+	// different token. Only the digest is folded into the fingerprint hash, so the
+	// token itself never lands in the cache file.
+	ghTok := ""
+	if r.GitHubToken != "" {
+		sum := sha256.Sum256([]byte(r.GitHubToken))
+		ghTok = hex.EncodeToString(sum[:])
+	}
+	fmt.Fprintf(h, "alive=%v;ua=%s;base=%s;redir=%d;mx=%t;gh=%s;", codes, r.UserAgent, r.ProjectBaseURL, r.MaxRedirects, r.MailtoCheckMX, ghTok)
 	for _, rule := range r.HTTPHeaders {
 		urls := append([]string(nil), rule.URLs...)
 		sort.Strings(urls)

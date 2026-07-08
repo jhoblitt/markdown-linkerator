@@ -167,6 +167,27 @@ func (h *HostState) Record(retries int) {
 	h.mu.Unlock()
 }
 
+// ArmCooldown gates subsequent requests to this host until retryAfter elapses
+// (clamped to maxCooldown), without touching the rate or the 429 count. It is
+// called the moment a 429/503 is observed mid-retry, so queued same-host jobs
+// wait out the server's window instead of piling on before the post-check
+// Penalize429 (which still applies the AIMD rate cut once). notBefore only ever
+// moves forward, so this composes with a later Penalize429.
+func (h *HostState) ArmCooldown(retryAfter time.Duration) {
+	if retryAfter <= 0 {
+		return
+	}
+	if retryAfter > maxCooldown {
+		retryAfter = maxCooldown
+	}
+	nb := time.Now().Add(retryAfter)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if nb.After(h.notBefore) {
+		h.notBefore = nb
+	}
+}
+
 // Penalize429 applies the AIMD multiplicative decrease and arms a cooldown after
 // a 429: the limiter's rate is halved down to a floor, and no token may be used
 // until retryAfter has elapsed (clamped to maxCooldown). Safe to call while a

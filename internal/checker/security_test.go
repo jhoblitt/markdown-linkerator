@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -145,6 +146,70 @@ func TestCanceledCheckIsError(t *testing.T) {
 	res := c.Check(ctx, model.Target{URL: srv.URL("/"), Kind: model.KindHTTP})
 	assert.Equal(t, model.StateError, res.State, "canceled check must be error, not alive")
 	assert.Error(t, res.Err)
+}
+
+// TestRetryCountZeroDisables429Retries guards that retryCount=0 truly disables
+// rate-limit retries even when connectRetries>0 — the two budgets must not share.
+func TestRetryCountZeroDisables429Retries(t *testing.T) {
+	srv := testserver.New()
+	defer srv.Close()
+
+	c := NewHTTPChecker(config.Resolved{
+		AliveStatusCodes:   map[int]bool{200: true},
+		Timeout:            2 * time.Second,
+		MaxRedirects:       5,
+		RetryOn429:         true,
+		MaxRetries:         0, // retryCount=0 → no 429 retries
+		ConnectRetries:     3, // must NOT leak into the 429 retry budget
+		FallbackRetryDelay: time.Millisecond,
+		BackoffMax:         20 * time.Millisecond,
+	})
+	res := c.Check(context.Background(), model.Target{URL: srv.URL("/toomany"), Kind: model.KindHTTP})
+
+	assert.Equal(t, model.StateDead, res.State)
+	assert.Equal(t, 429, res.StatusCode)
+	assert.Equal(t, 1, srv.Requests("/toomany"), "retryCount=0 must not retry a 429, even with connectRetries>0")
+}
+
+// TestGetFallbackBodyBounded guards that a HEAD-rejecting endpoint serving a huge
+// GET body cannot make the checker download it in full just to read the status.
+func TestGetFallbackBodyBounded(t *testing.T) {
+	const total = 20 << 20 // 20 MiB the server would serve if we drained to EOF
+	var written int64
+	getDone := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusMethodNotAllowed) // force the GET fallback
+			return
+		}
+		defer close(getDone)
+		w.WriteHeader(http.StatusOK)
+		buf := make([]byte, 64<<10)
+		for sent := 0; sent < total; sent += len(buf) {
+			n, err := w.Write(buf)
+			atomic.AddInt64(&written, int64(n))
+			if err != nil {
+				return // client closed the body early
+			}
+		}
+	}))
+	defer srv.Close()
+
+	c := NewHTTPChecker(config.Resolved{
+		AliveStatusCodes: map[int]bool{200: true},
+		Timeout:          5 * time.Second,
+		MaxRedirects:     5,
+	})
+	res := c.Check(context.Background(), model.Target{URL: srv.URL + "/", Kind: model.KindHTTP})
+	assert.Equal(t, model.StateAlive, res.State)
+
+	select {
+	case <-getDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("GET handler did not stop after the client closed the body")
+	}
+	assert.Lessf(t, atomic.LoadInt64(&written), int64(2<<20),
+		"GET fallback must not drain the whole body; server wrote %d bytes", atomic.LoadInt64(&written))
 }
 
 // TestNo429GetFallback guards that a persistent 429 on HEAD is authoritative and

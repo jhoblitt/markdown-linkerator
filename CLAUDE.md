@@ -62,23 +62,31 @@ promise (the GitHub Action consumes the binary/image, not the source).
    poisons the next run. Never re-`Put` a `FromCache` result (it would refresh
    the TTL without a real check). The on-disk cache file carries a
    `CacheFingerprint()` of the request policy (alive codes, custom headers,
-   user-agent, base URL, redirect cap, GitHub-token presence); a fingerprint
-   mismatch on load discards the cache so results are never reused across
-   incompatible policies.
+   user-agent, base URL, redirect cap, and a non-reversible **digest of the
+   GitHub token** — not merely its presence, so results from one token are never
+   reused under a different one); a fingerprint mismatch on load discards the
+   cache so results are never reused across incompatible policies.
 4. **Dedup keeps the channel graph acyclic.** Dedup is a mutex-guarded seen-map
    with per-URL state, not a goroutine in a channel cycle. A completing check
    fans its result out to every occurrence of the URL. Exactly-once emit is
    guaranteed by the per-URL mutex making "complete + snapshot occurrences"
    atomic against "append occurrence".
-5. **Two retry classes with different backoffs.** *Rate-limit* retries (429/503)
-   honor `Retry-After` (integer-seconds *and* HTTP-date), capped at `BackoffMax`
-   (an hour-long Retry-After makes us give up, not park a slot) — and a 429 also
-   triggers the host AIMD penalty (halve the rate to a floor) + a `notBefore`
-   cooldown. *Connection* failures (refused/reset/DNS) use a **separate bounded,
-   fast** path (`ConnectRetries`, default 3, ~0.5/1/2s) — never the long
-   rate-limit backoff, so a dead socket fails in seconds. Retry-After is honored
-   as sent, **never floored** to `RetryWaitMin`. On HEAD, a final 429/503 is
-   authoritative (no GET fallback that would double the load). The client uses
+5. **Two retry classes, counted and backed-off separately.** `retryablehttp`'s
+   single `RetryMax` is `max(MaxRetries, ConnectRetries)`, but `checkRetry`
+   enforces each class independently via per-class counters in `retryState`, so
+   the budgets never bleed into each other (`retryCount=0` disables 429/503
+   retries even with `connectRetries>0`). *Rate-limit* retries (429/503) are
+   bounded by `MaxRetries`, honor `Retry-After` (integer-seconds *and* HTTP-date,
+   **never floored** to `RetryWaitMin`) capped at `BackoffMax` (an hour-long
+   Retry-After makes us give up, not park a slot), arm the host `notBefore`
+   cooldown **immediately on observation** (`ArmCooldown`, so queued same-host
+   jobs stop feeding a throttling host during its window) and apply the AIMD rate
+   cut once post-check. *Connection* failures (refused/reset/DNS) use a separate
+   bounded, fast path (`ConnectRetries`, default 3, ~0.5/1/2s) — never the long
+   rate-limit backoff, so a dead socket fails in seconds. On HEAD, a final 429/503
+   is authoritative (no GET fallback that would double the load); the GET fallback
+   drains at most `maxDrainBytes` (8 KiB) so a HEAD-rejecting large-body endpoint
+   cannot make us download it in full. The client uses
    `retryablehttp.PassthroughErrorHandler` so an exhausted 429 returns its
    response (not the default nil+error, which discards the status).
 6. **Interrupted or unreadable runs never exit green.** A canceled check is

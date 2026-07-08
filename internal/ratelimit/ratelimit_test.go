@@ -12,6 +12,21 @@ import (
 	"github.com/jhoblitt/markdown-linkerator/internal/config"
 )
 
+// TestArmCooldownGatesAcquire guards that arming a cooldown (as done the instant a
+// 429/503 is observed) makes a subsequent Acquire for the same host wait out the
+// window, so queued jobs stop hitting a throttling host immediately — not only
+// after the retrying request's post-check Penalize429.
+func TestArmCooldownGatesAcquire(t *testing.T) {
+	// A fast bucket isolates the cooldown from token-bucket pacing.
+	reg := NewRegistry(config.Resolved{PerHostRPS: 1000, PerHostBurst: 1000})
+	h := reg.Host("example.com")
+
+	h.ArmCooldown(80 * time.Millisecond)
+	start := time.Now()
+	require.NoError(t, h.Acquire(context.Background()))
+	assert.GreaterOrEqual(t, time.Since(start), 60*time.Millisecond, "Acquire must wait out the armed cooldown")
+}
+
 func limit(h *HostState) float64 { return float64(h.limiter.Limit()) }
 
 func TestRegistryHostLazyAndOverrides(t *testing.T) {

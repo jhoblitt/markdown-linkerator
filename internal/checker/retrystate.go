@@ -14,7 +14,8 @@ type retryState struct {
 	retries           int
 	saw429            bool
 	retryAfter        time.Duration
-	transportFailures int // connection-level failures (bounded separately from 429 retries)
+	transportFailures int // connection-level failures (bounded by ConnectRetries)
+	rateLimitRetries  int // 429/503 retries (bounded by MaxRetries, independent of transport)
 }
 
 type retryStateKey struct{}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -46,16 +47,23 @@ func (p *Pipeline) SourceErrors() int64 { return p.srcErrors.Load() }
 // New builds a Pipeline. The cache and collector are provided by the engine so
 // it can persist the cache and render the report around the run.
 func New(cfg config.Resolved, coll *report.Collector, c *cache.Cache) *Pipeline {
-	http := checker.NewHTTPChecker(cfg)
-	// Surface retry/backoff waits so a stalled heartbeat reads as
-	// "waiting on X: HTTP 429, retrying in 30s" rather than a frozen counter.
-	http.OnRetry = func(url string, attempt, code int, wait time.Duration) {
+	chk := checker.NewHTTPChecker(cfg)
+	reg := ratelimit.NewRegistry(cfg)
+	chk.OnRetry = func(url string, attempt, code int, wait time.Duration) {
+		// Surface retry/backoff waits so a stalled heartbeat reads as
+		// "waiting on X: HTTP 429, retrying in 30s" rather than a frozen counter.
 		coll.NetStatus(url, fmt.Sprintf("HTTP %d, retrying in %s (attempt %d)", code, wait.Round(time.Second), attempt+1))
+		// Gate other queued jobs to this host the instant a 429/503 is seen, so
+		// we stop feeding a throttling host during its Retry-After window rather
+		// than waiting for this request's post-check Penalize429.
+		if code == http.StatusTooManyRequests || code == http.StatusServiceUnavailable {
+			reg.Host(hostOf(url)).ArmCooldown(wait)
+		}
 	}
 	return &Pipeline{
 		cfg:         cfg,
-		http:        http,
-		reg:         ratelimit.NewRegistry(cfg),
+		http:        chk,
+		reg:         reg,
 		cache:       c,
 		coll:        coll,
 		anchorCache: map[string]map[string]bool{},

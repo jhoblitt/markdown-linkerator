@@ -222,18 +222,29 @@ func (c *HTTPChecker) checkRetry(ctx context.Context, resp *http.Response, err e
 		if !c.cfg.RetryOn429 {
 			return false, nil
 		}
-		if c.retryAfterTooLong(resp) {
-			return false, nil
-		}
-		return true, nil
+		return c.rateLimitRetry(ctx, resp), nil
 	case http.StatusServiceUnavailable:
-		if c.retryAfterTooLong(resp) {
-			return false, nil
-		}
-		return true, nil
+		return c.rateLimitRetry(ctx, resp), nil
 	default:
 		return false, nil
 	}
+}
+
+// rateLimitRetry bounds 429/503 retries by MaxRetries — independent of the
+// connection-retry budget (`RetryMax` is the max of the two) — so `retryCount=0`
+// truly disables rate-limit retries, and gives up if Retry-After exceeds
+// BackoffMax.
+func (c *HTTPChecker) rateLimitRetry(ctx context.Context, resp *http.Response) bool {
+	if c.retryAfterTooLong(resp) {
+		return false
+	}
+	if st := retryStateFrom(ctx); st != nil {
+		st.rateLimitRetries++
+		if st.rateLimitRetries > c.cfg.MaxRetries {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *HTTPChecker) retryAfterTooLong(resp *http.Response) bool {
@@ -384,11 +395,18 @@ func pathWithin(p, prefix string) bool {
 	return p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
+// maxDrainBytes caps how much of a response body drain reads before closing. The
+// status code is already parsed from the header, so we only read a little — to
+// let a small body reuse the keep-alive connection — then close. A HEAD-rejecting
+// endpoint that streams a large file can no longer make us download it in full
+// just to learn its status.
+const maxDrainBytes = 8 << 10 // 8 KiB
+
 func drain(resp *http.Response) {
 	if resp == nil || resp.Body == nil {
 		return
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
+	_, _ = io.CopyN(io.Discard, resp.Body, maxDrainBytes)
 	_ = resp.Body.Close()
 }
 
