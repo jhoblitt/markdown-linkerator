@@ -187,6 +187,9 @@ func TestReplacementPatternBaseURLExplicit(t *testing.T) {
 }
 
 func TestReplacementPatternBaseURLDefaultsToCwd(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("BASEURL defaulting to cwd resolves through a file:// path — Unix-specific")
+	}
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 	cfg := config.Resolved{
