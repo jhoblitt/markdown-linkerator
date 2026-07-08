@@ -15,6 +15,8 @@ type jsonReport struct {
 	Dead     int          `json:"dead"`
 	Ignored  int          `json:"ignored"`
 	Errored  int          `json:"errored"`
+	Cached   int          `json:"cached"`
+	Reused   int          `json:"reused"`
 	ExitCode int          `json:"exitCode"`
 	Results  []jsonResult `json:"results"`
 	Hosts    []jsonHost   `json:"hosts"`
@@ -46,6 +48,8 @@ func toWire(s Summary) jsonReport {
 		Dead:     s.Dead,
 		Ignored:  s.Ignored,
 		Errored:  s.Errored,
+		Cached:   s.Cached,
+		Reused:   s.Reused,
 		ExitCode: s.ExitCode,
 		Results:  make([]jsonResult, 0, len(s.Results)),
 		Hosts:    make([]jsonHost, 0, len(s.Hosts)),

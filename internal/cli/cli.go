@@ -133,8 +133,10 @@ func writeReportJSON(path string, s *report.Summary) error {
 		Dead     int `json:"dead"`
 		Ignored  int `json:"ignored"`
 		Errored  int `json:"errored"`
+		Cached   int `json:"cached"`
+		Reused   int `json:"reused"`
 		ExitCode int `json:"exitCode"`
-	}{s.Total, s.Alive, s.Dead, s.Ignored, s.Errored, s.ExitCode}
+	}{s.Total, s.Alive, s.Dead, s.Ignored, s.Errored, s.Cached, s.Reused, s.ExitCode}
 	b, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return err
