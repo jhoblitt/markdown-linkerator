@@ -207,7 +207,7 @@ func (c *Collector) Add(r model.Result) {
 
 // Finish sorts the buffered results, renders the report to Options.Out, and
 // returns the Summary. hostStats is rendered as a per-host section (text,
-// non-quiet only), sorted by host.
+// non-quiet only), sorted by request count (busiest first).
 func (c *Collector) Finish(hostStats []model.HostStat) Summary {
 	c.mu.Lock()
 	results := make([]model.Result, len(c.results))
@@ -218,7 +218,14 @@ func (c *Collector) Finish(hostStats []model.HostStat) Summary {
 
 	hosts := make([]model.HostStat, len(hostStats))
 	copy(hosts, hostStats)
-	sort.Slice(hosts, func(i, j int) bool { return hosts[i].Host < hosts[j].Host })
+	// Busiest hosts first (the rate-limit risks); host name is a deterministic
+	// tie-break so the report stays CI-diffable.
+	sort.Slice(hosts, func(i, j int) bool {
+		if hosts[i].Requests != hosts[j].Requests {
+			return hosts[i].Requests > hosts[j].Requests
+		}
+		return hosts[i].Host < hosts[j].Host
+	})
 
 	s := summarize(results, hosts, c.cfg.ErrorFailsRun)
 

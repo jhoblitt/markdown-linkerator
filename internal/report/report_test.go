@@ -168,22 +168,24 @@ func TestEmptyRunQuietSilent(t *testing.T) {
 }
 
 func TestHostSection(t *testing.T) {
+	// The busiest host is alphabetically last, so request-count order differs
+	// from name order — a genuine test of the busiest-first sort.
 	hosts := []model.HostStat{
-		{Host: "z.example.com", Requests: 5, Retries: 1, N429: 0, ObservedRPS: 0.5},
-		{Host: "docs.ceph.com", Requests: 47, Retries: 3, N429: 0, ObservedRPS: 0.94},
+		{Host: "a.example.com", Requests: 5, Retries: 1, N429: 0, ObservedRPS: 0.5},
+		{Host: "z.docs.ceph.com", Requests: 47, Retries: 3, N429: 0, ObservedRPS: 0.94},
 	}
 	buf, s := collect(t, config.Resolved{}, Options{}, hosts,
 		res("a.md", 1, "http://alive", model.StateAlive, 200),
 	)
 
 	require.Len(t, s.Hosts, 2)
-	// Hosts are sorted by name.
-	assert.Equal(t, "docs.ceph.com", s.Hosts[0].Host)
-	assert.Equal(t, "z.example.com", s.Hosts[1].Host)
+	// Hosts are sorted by request count, busiest first (not by name).
+	assert.Equal(t, "z.docs.ceph.com", s.Hosts[0].Host) // 47 requests
+	assert.Equal(t, "a.example.com", s.Hosts[1].Host)   // 5 requests, but alphabetically first
 
 	out := buf.String()
-	assert.Contains(t, out, "docs.ceph.com  47 requests  0.94 req/s  3 retries  0 unresolved-429")
-	assert.Less(t, strings.Index(out, "docs.ceph.com"), strings.Index(out, "z.example.com"))
+	assert.Contains(t, out, "z.docs.ceph.com  47 requests  0.94 req/s  3 retries  0 unresolved-429")
+	assert.Less(t, strings.Index(out, "z.docs.ceph.com"), strings.Index(out, "a.example.com"))
 }
 
 func TestHostSectionSuppressedWhenQuiet(t *testing.T) {
