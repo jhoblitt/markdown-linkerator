@@ -84,10 +84,10 @@ promise (the GitHub Action consumes the binary/image, not the source).
    cut once post-check. *Connection* failures (refused/reset/DNS) use a separate
    bounded, fast path (`ConnectRetries`, default 3, ~0.5/1/2s) — never the long
    rate-limit backoff, so a dead socket fails in seconds. A per-request *timeout*
-   (`--timeout`) is **not retried** — each attempt already costs the full timeout,
-   so retrying would multiply the wait — and a HEAD timeout is definitive (no GET
-   fallback that would time out again), so a hanging host is bounded by one
-   `--timeout`, not `timeout × (retries + HEAD/GET)`. On HEAD, a final 429/503
+   (`--timeout`) is retried up to `MaxRetries` (its own budget, distinct from
+   ConnectRetries), each attempt bounded by `--timeout`, and a HEAD timeout stays
+   HEAD-only (no GET fallback that would time out again), so a hanging host costs
+   at most `(retryCount+1) × timeout` — tune with `--retry-count` (`0` disables). On HEAD, a final 429/503
    is authoritative (no GET fallback that would double the load); the GET fallback
    drains at most `maxDrainBytes` (8 KiB) so a HEAD-rejecting large-body endpoint
    cannot make us download it in full. The client uses

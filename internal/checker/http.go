@@ -94,9 +94,9 @@ func (c *HTTPChecker) Check(ctx context.Context, t model.Target) model.Result {
 		res.Err = ctx.Err()
 		return res
 	} else if isTimeout(err) {
-		// A HEAD timeout means the host is hanging; a GET fallback would just
-		// time out again, doubling the wait. Treat it as dead now so the check
-		// is bounded by a single --timeout.
+		// HEAD timed out (after its own --retry-count retries); the host is
+		// hanging, so a GET fallback would just time out again and double the
+		// wait. Treat it as dead now, keeping the check HEAD-only.
 		res.State = model.StateDead
 		res.StatusCode = 0
 		res.Detail = err.Error()
@@ -213,12 +213,18 @@ func (c *HTTPChecker) checkRetry(ctx context.Context, resp *http.Response, err e
 		if errors.Is(err, errTooManyRedirects) {
 			return false, nil
 		}
-		// A per-request timeout (--timeout) is not retried: each attempt already
-		// costs the full timeout, so retrying would multiply the wait (a 10s
-		// timeout became ~50s over the connect-retry budget), and a host that
-		// hangs once will almost certainly hang again. Bound it to one timeout.
+		// A per-request timeout (--timeout) is retried up to --retry-count, each
+		// attempt bounded by --timeout, so the total is at most (retryCount+1) ×
+		// timeout (and a HEAD timeout does not fall through to GET — see Check).
+		// This is a separate budget from a fast connection failure's ConnectRetries.
 		if isTimeout(err) {
-			return false, nil
+			if st := retryStateFrom(ctx); st != nil {
+				st.timeoutRetries++
+				if st.timeoutRetries > c.cfg.MaxRetries {
+					return false, nil
+				}
+			}
+			return true, nil
 		}
 		// A connection-level failure (refused, reset, DNS, no route): retry a
 		// bounded few times quickly, then give up — don't sit in the long

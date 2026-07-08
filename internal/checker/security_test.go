@@ -45,31 +45,37 @@ func TestConnectionFailureBoundedFast(t *testing.T) {
 	assert.Less(t, elapsed, 15*time.Second, "connection failures must fail fast, not sit in the rate-limit backoff")
 }
 
-// TestTimeoutBoundedNotRetried guards that a per-request timeout is bounded by a
-// single --timeout: it is not retried (each retry would cost another full
-// timeout), and a HEAD timeout does not fall through to a GET that times out
-// again. Regression for a 10s timeout taking ~50s over the retry+fallback path.
-func TestTimeoutBoundedNotRetried(t *testing.T) {
+// TestTimeoutRetriedUpToRetryCount guards that a per-request timeout is retried
+// up to --retry-count (each attempt bounded by --timeout) and stays HEAD-only —
+// it uses the retry-count budget (not the connection-failure one) and does not
+// fall through to a GET that would time out again and double the wait.
+func TestTimeoutRetriedUpToRetryCount(t *testing.T) {
+	newChecker := func(retryCount int) *HTTPChecker {
+		return NewHTTPChecker(config.Resolved{
+			AliveStatusCodes:   map[int]bool{200: true},
+			Timeout:            100 * time.Millisecond, // fires before /slow's 2s response
+			MaxRedirects:       5,
+			MaxRetries:         retryCount,
+			ConnectRetries:     3,
+			FallbackRetryDelay: 30 * time.Second,
+			BackoffMax:         2 * time.Minute,
+		})
+	}
+
+	// retryCount 2 → 1 initial + 2 retries == 3 attempts, all HEAD (no GET fallback).
 	srv := testserver.New()
 	defer srv.Close()
-
-	c := NewHTTPChecker(config.Resolved{
-		AliveStatusCodes:   map[int]bool{200: true},
-		Timeout:            200 * time.Millisecond, // fires well before /slow's 2s response
-		MaxRedirects:       5,
-		MaxRetries:         4,
-		ConnectRetries:     3,
-		FallbackRetryDelay: 30 * time.Second,
-		BackoffMax:         2 * time.Minute,
-	})
-	start := time.Now()
-	res := c.Check(context.Background(), model.Target{URL: srv.URL("/slow"), Kind: model.KindHTTP})
-	elapsed := time.Since(start)
-
+	res := newChecker(2).Check(context.Background(), model.Target{URL: srv.URL("/slow"), Kind: model.KindHTTP})
 	assert.Equal(t, model.StateDead, res.State)
 	assert.Equal(t, 0, res.StatusCode)
-	assert.Equal(t, 1, srv.Requests("/slow"), "a timeout must not be retried or fall through to GET")
-	assert.Lessf(t, elapsed, time.Second, "one 200ms timeout must bound the check, not multiply; took %s", elapsed)
+	assert.Equal(t, 3, srv.Requests("/slow"), "a timeout is retried up to --retry-count, HEAD-only")
+
+	// retryCount 0 → a single attempt (timeout retries disabled).
+	srv0 := testserver.New()
+	defer srv0.Close()
+	res0 := newChecker(0).Check(context.Background(), model.Target{URL: srv0.URL("/slow"), Kind: model.KindHTTP})
+	assert.Equal(t, model.StateDead, res0.State)
+	assert.Equal(t, 1, srv0.Requests("/slow"), "retryCount=0 disables timeout retries")
 }
 
 // TestIsGitHubHost guards which hosts receive the GitHub token — GitHub's own
