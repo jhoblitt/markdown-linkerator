@@ -8,7 +8,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/net v0.56.0
-	golang.org/x/sync v0.21.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/time v0.15.0
 	sigs.k8s.io/yaml v1.6.0
 )
