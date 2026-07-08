@@ -146,10 +146,12 @@ writes progress to **stderr** (never stdout, which stays the clean report):
 
 - A **time-based heartbeat** (`Collector.StartProgress`, a 10s ticker) fires even
   when every worker is stalled in backoff and no results are arriving — so the
-  run is never silent > ~15s. It prints a counter line plus **one line per
-  in-flight check** (URL, age, and why — e.g. "HTTP 429, retrying in 30s"),
-  fed by `NetEnqueue`/`NetStart`/`NetStatus`/`NetComplete` and the checker's
-  `OnRetry` hook.
+  run is never silent > ~15s. It prints a counter line; an **in-flight-by-host**
+  line so a large paced backlog shows where it is queued (the rate-limited
+  bottleneck hosts, busiest first); and **one line per stalled in-flight check**
+  (URL, age, and why — e.g. "HTTP 429, retrying in 30s"). Fed by
+  `NetEnqueue`/`NetStart`/`NetStatus`/`NetComplete` (which also track per-host
+  in-flight counts) and the checker's `OnRetry` hook.
 - `--verbose` streams each link as it completes; a URL is checked once per run,
   so later occurrences are marked `(reused)` and on-disk cache hits `(cached)`.
 - `--format` is `text` (default), `json`, or `yaml` (json/yaml share one wire
