@@ -235,6 +235,11 @@ func classify(rawDest, dest, sourceFile, sourceDir string, line int) model.Targe
 		t.Fragment = pathPart[i+1:]
 		pathPart = pathPart[:i]
 	}
+	// A link encodes spaces and other characters (e.g. "My%20File.png"); decode
+	// to the real filesystem name before resolving.
+	if dec, err := url.PathUnescape(pathPart); err == nil {
+		pathPart = dec
+	}
 	t.URL = resolvePath(sourceDir, pathPart)
 	return t
 }
