@@ -54,27 +54,58 @@ promise (the GitHub Action consumes the binary/image, not the source).
    `Err == nil` for an ordinary dead link. `Err` (and errgroup cancellation) is
    reserved for context cancellation and fatal I/O. One dead link must never
    tear down the pipeline; the collector gathers every result.
-3. **The cache is definitive-only.** Only `StateAlive` and hard-dead
-   (`400/404/410`) results are cached. Never cache `429`, `5xx`, timeouts,
-   transport errors, `StateError`, or `StateIgnored` — caching a transient 429
-   as "dead" poisons the next run. Also: never re-`Put` a `FromCache` result
-   (it would refresh the TTL without a real check).
+3. **The cache is definitive-only, and namespaced by request policy.** Only
+   `StateAlive` and stable client errors (any `4xx` **except** the transient
+   `408/425/429`) are cached (`cache.Definitive`/`stableClientError`). Never
+   cache `429`, `5xx`, timeouts, transport errors, `StateError`, `StateIgnored`,
+   or any result with `Err != nil` — caching a transient failure as "dead"
+   poisons the next run. Never re-`Put` a `FromCache` result (it would refresh
+   the TTL without a real check). The on-disk cache file carries a
+   `CacheFingerprint()` of the request policy (alive codes, custom headers,
+   user-agent, base URL, redirect cap, GitHub-token presence); a fingerprint
+   mismatch on load discards the cache so results are never reused across
+   incompatible policies.
 4. **Dedup keeps the channel graph acyclic.** Dedup is a mutex-guarded seen-map
    with per-URL state, not a goroutine in a channel cycle. A completing check
    fans its result out to every occurrence of the URL. Exactly-once emit is
    guaranteed by the per-URL mutex making "complete + snapshot occurrences"
    atomic against "append occurrence".
-5. **429 backoff honors Retry-After (both forms), clamped.** The HTTP checker
-   parses `Retry-After` as integer-seconds *and* HTTP-date, and clamps the wait
-   to `BackoffMax`; a server asking for an hour makes us give up, not park a
-   slot. A 429 also triggers the host AIMD penalty (halve the rate to a floor)
-   and a `notBefore` cooldown.
-6. **The engine is side-effect-free.** `engine.Run` does no flag parsing, no
+5. **Two retry classes with different backoffs.** *Rate-limit* retries (429/503)
+   honor `Retry-After` (integer-seconds *and* HTTP-date), capped at `BackoffMax`
+   (an hour-long Retry-After makes us give up, not park a slot) — and a 429 also
+   triggers the host AIMD penalty (halve the rate to a floor) + a `notBefore`
+   cooldown. *Connection* failures (refused/reset/DNS) use a **separate bounded,
+   fast** path (`ConnectRetries`, default 3, ~0.5/1/2s) — never the long
+   rate-limit backoff, so a dead socket fails in seconds. Retry-After is honored
+   as sent, **never floored** to `RetryWaitMin`. On HEAD, a final 429/503 is
+   authoritative (no GET fallback that would double the load). The client uses
+   `retryablehttp.PassthroughErrorHandler` so an exhausted 429 returns its
+   response (not the default nil+error, which discards the status).
+6. **Interrupted or unreadable runs never exit green.** A canceled check is
+   `StateError` (not the `StateAlive` zero value) and is never cached; the engine
+   surfaces `ctx.Err()` (SIGINT / `--max-time`) as a non-zero exit. Unreadable or
+   unparseable input files increment `Pipeline.SourceErrors()` and fail the run
+   regardless of `--fail-on-error` (documentation must not go silently unchecked).
+7. **Configured headers never leak off-origin.** `ruleMatches` requires an exact
+   scheme+host origin (with a path boundary), not a raw prefix; and
+   `checkRedirect` strips custom `httpHeaders` on any cross-origin redirect (Go
+   only strips `Authorization`/`Cookie`). The GitHub token is host-scoped to
+   GitHub hosts and yields to a user `Authorization` header.
+8. **The engine is side-effect-free.** `engine.Run` does no flag parsing, no
    `os.Exit`, no global mutable state (except `internal/version`, set once by
    ldflags). The CLI, unit tests, and e2e harness all drive the same `Run`.
-7. **Keys are normalized once.** Dedup and cache share `model.NormalizeKey`
+9. **Keys are normalized once.** Dedup and cache share `model.NormalizeKey`
    (lowercase scheme+host, strip default ports, drop fragment). Fragments are
    reported per-occurrence but never part of the network/cache key.
+10. **GitHub auth is automatic in CI.** The token defaults to `$GITHUB_TOKEN`
+    (injected by every Actions job) and is sent as `Authorization: Bearer` to
+    GitHub hosts only, so a repo full of `github.com` links is not throttled by
+    the 60/hr unauthenticated limit — the usual cause of a stalled run.
+11. **Anchor matching is dual-case.** A `#fragment` matches an anchor by its
+    verbatim form (case-sensitive HTML `id`/`name`, e.g. generated CRD
+    `ceph.rook.io/v1.CephCluster`) **and** its lowercased form (GitHub heading
+    slugs). Cross-file `file.md#anchor` links are validated against the target
+    file's anchors when `CheckFragments` is on (default).
 
 ## Configuration & the mlc-compat contract
 
@@ -92,7 +123,55 @@ so does a native `linkerator.yaml` (sigs.k8s.io/yaml routes YAML through JSON).
 mapping is a breaking change requiring a major version bump.
 
 Conservative shipped defaults: `perHostRPS=1`, `perHostBurst=2`,
-`urlWorkers=10`, `parseWorkers=10`, cache TTL `24h`, `aliveStatusCodes=[200]`.
+`urlWorkers=10`, `parseWorkers=10`, `retryCount=4`, `connectRetries=3`, cache
+TTL `24h`, `aliveStatusCodes=[200]`, `checkExternal`/`checkFragments` on.
+
+## Progress / observability
+
+A paced run over a large tree takes minutes, and results are buffered for the
+final sorted report — so without live output it looks hung. `internal/report`
+writes progress to **stderr** (never stdout, which stays the clean report):
+
+- A **time-based heartbeat** (`Collector.StartProgress`, a 10s ticker) fires even
+  when every worker is stalled in backoff and no results are arriving — so the
+  run is never silent > ~15s. It prints a counter line plus **one line per
+  in-flight check** (URL, age, and why — e.g. "HTTP 429, retrying in 30s"),
+  fed by `NetEnqueue`/`NetStart`/`NetStatus`/`NetComplete` and the checker's
+  `OnRetry` hook.
+- `--verbose` streams each link as it completes; a URL is checked once per run,
+  so later occurrences are marked `(reused)` and on-disk cache hits `(cached)`.
+- `--format` is `text` (default), `json`, or `yaml` (json/yaml share one wire
+  schema and suppress live output).
+
+## Lessons learned (field-tested against rook/rook)
+
+Non-obvious behaviors discovered running the tool against a real large docs
+tree, each now guarded by a test — do not regress them:
+
+- **GitHub's 60/hr unauthenticated limit is the #1 cause of "hung" CI runs.**
+  A repo full of `github.com` links gets 429s and sits in backoff. Auto-using
+  `$GITHUB_TOKEN` is the fix (invariant 10), not more retries.
+- **Connection failures must fast-fail.** Routing a refused socket through the
+  rate-limit backoff makes a single dead localhost link take minutes. Connection
+  failures get their own bounded fast path (invariant 5).
+- **`go-retryablehttp` discards the response on exhausted retries by default**
+  (closes the body, returns `nil`+error) — set `PassthroughErrorHandler` or a
+  final 429 looks like a transport error (status 0).
+- **Retry-After must not be floored** to `RetryWaitMin`; a `Retry-After: 1`
+  inflated to a 30s floor makes every 429 needlessly slow.
+- **HTML `id`/`name` anchors are case-sensitive; GitHub heading slugs are
+  lowercased.** Generated CRD docs link to `#ceph.rook.io/v1.CephCluster`
+  (verbatim id); lowercasing the fragment breaks the match. Match both forms.
+- **Custom headers leak across cross-origin redirects** — Go only strips
+  `Authorization`/`Cookie`. Strip configured headers ourselves (invariant 7).
+- **markdown-link-check's `httpHeaders` prefix match is a secret-leak vector**
+  (`api.github.com` prefix-matches `api.github.com.evil.example`). We require an
+  exact origin.
+- **Local anchor/file links are checked in-memory, never network-queued;** a
+  synthetic `Status: 200` means "anchor/file found". Users filter noisy
+  generated cross-refs (e.g. `#ceph.rook.io/...`) with `ignorePatterns`.
+- **Reuse ≠ repeat.** Dedup collapses a URL to one request; the per-occurrence
+  fan-out made it *look* re-checked until occurrences were marked `(reused)`.
 
 ## Tests
 

@@ -75,7 +75,8 @@ occurrences are marked `(reused)`, and on-disk cache hits `(cached)`.
 | `--timeout` | `LINKERATOR_TIMEOUT` | `10s` | per-request timeout |
 | `--max-time` | `LINKERATOR_MAX_TIME` | `0` | maximum total run time (0 = no limit); on expiry the run stops and exits 2 |
 | `--retry-on-429` | `LINKERATOR_RETRY_ON_429` | `true` | retry 429 honoring `Retry-After` |
-| `--retry-count` | `LINKERATOR_RETRY_COUNT` | `4` | max retries per URL |
+| `--retry-count` | `LINKERATOR_RETRY_COUNT` | `4` | max retries per URL on 429/503 |
+| `--connect-retries` | `LINKERATOR_CONNECT_RETRIES` | `3` | fast retries on a connection failure before giving up |
 | `--retry-max-wait` | `LINKERATOR_RETRY_MAX_WAIT` | `2m` | cap on `Retry-After` wait |
 | `-a, --alive` | `LINKERATOR_ALIVE_CODES` | `200` | extra alive HTTP codes (CSV) |
 | `--check-external` | `LINKERATOR_CHECK_EXTERNAL` | `true` | check http(s) links (`false` = offline) |
