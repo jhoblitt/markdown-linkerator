@@ -145,11 +145,26 @@ func (c *HTTPChecker) do(ctx context.Context, method string, t model.Target) (*h
 	return c.client.Do(req)
 }
 
-func (c *HTTPChecker) checkRedirect(_ *http.Request, via []*http.Request) error {
+func (c *HTTPChecker) checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= c.cfg.MaxRedirects {
 		return errTooManyRedirects
 	}
+	// Go's client strips Authorization/Cookie on a cross-origin redirect, but not
+	// the custom headers we attach from httpHeaders — which may carry {{env.*}}
+	// secrets. Strip them ourselves so a redirect off-origin cannot exfiltrate
+	// them to an attacker-controlled host.
+	if len(via) > 0 && !sameOrigin(req.URL, via[0].URL) {
+		for _, rule := range c.cfg.HTTPHeaders {
+			for k := range rule.Headers {
+				req.Header.Del(k)
+			}
+		}
+	}
 	return nil
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
 // checkRetry decides whether an attempt should be retried. It retries transport

@@ -143,6 +143,17 @@ func TestMergePrecedence(t *testing.T) {
 	assert.Equal(t, 25, base.URLWorkers)
 }
 
+func TestRetryCountZeroDisablesRetries(t *testing.T) {
+	zero := 0
+	r, err := Config{RetryCount: &zero}.Resolve()
+	require.NoError(t, err)
+	assert.Equal(t, 0, r.MaxRetries, "an explicit retry-count 0 must disable retries")
+
+	unset, err := Config{}.Resolve()
+	require.NoError(t, err)
+	assert.Equal(t, 4, unset.MaxRetries, "an unset retry-count falls back to the default")
+}
+
 func TestResolveConservativeDefaults(t *testing.T) {
 	r, err := Config{}.Resolve()
 	require.NoError(t, err)

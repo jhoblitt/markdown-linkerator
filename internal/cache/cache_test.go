@@ -80,7 +80,7 @@ func TestPutDefinitiveOnly(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c, err := New(filepath.Join(t.TempDir(), "c.json"), time.Hour, true)
+			c, err := New(filepath.Join(t.TempDir(), "c.json"), time.Hour, true, "")
 			require.NoError(t, err)
 
 			c.Put("https://x/", tc.r)
@@ -103,7 +103,7 @@ func TestPutDefinitiveOnly(t *testing.T) {
 // file, since Put always stamps time.Now().
 func TestGetFreshVsExpired(t *testing.T) {
 	t.Run("put-then-get-is-fresh", func(t *testing.T) {
-		c, err := New(filepath.Join(t.TempDir(), "c.json"), time.Hour, true)
+		c, err := New(filepath.Join(t.TempDir(), "c.json"), time.Hour, true, "")
 		require.NoError(t, err)
 		c.Put("k", res(model.StateAlive, 200))
 
@@ -121,7 +121,7 @@ func TestGetFreshVsExpired(t *testing.T) {
 			"https://fresh/": {StatusCode: 404, State: model.StateDead, CheckedAt: time.Now().Add(-1 * time.Minute)},
 		}})
 
-		c, err := New(p, time.Hour, true)
+		c, err := New(p, time.Hour, true, "")
 		require.NoError(t, err)
 		assert.Equal(t, 2, c.Len()) // both loaded; Get filters, Len does not
 
@@ -135,7 +135,7 @@ func TestGetFreshVsExpired(t *testing.T) {
 	})
 
 	t.Run("zero-ttl-always-misses", func(t *testing.T) {
-		c, err := New(filepath.Join(t.TempDir(), "c.json"), 0, true)
+		c, err := New(filepath.Join(t.TempDir(), "c.json"), 0, true, "")
 		require.NoError(t, err)
 		c.Put("k", res(model.StateAlive, 200))
 
@@ -150,7 +150,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "cache.json")
 
-	c1, err := New(p, time.Hour, true)
+	c1, err := New(p, time.Hour, true, "")
 	require.NoError(t, err)
 	c1.Put("https://a/", res(model.StateAlive, 200))
 	c1.Put("https://b/", res(model.StateDead, 404))
@@ -169,7 +169,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, tmps, "temp file must be renamed/cleaned up")
 
-	c2, err := New(p, time.Hour, true)
+	c2, err := New(p, time.Hour, true, "")
 	require.NoError(t, err)
 	assert.Equal(t, 2, c2.Len())
 
@@ -191,7 +191,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 // rather than appending or corrupting it.
 func TestSaveOverwritesAtomically(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "cache.json")
-	c, err := New(p, time.Hour, true)
+	c, err := New(p, time.Hour, true, "")
 	require.NoError(t, err)
 
 	c.Put("https://a/", res(model.StateAlive, 200))
@@ -200,7 +200,7 @@ func TestSaveOverwritesAtomically(t *testing.T) {
 	c.Put("https://b/", res(model.StateAlive, 200))
 	require.NoError(t, c.Save())
 
-	reloaded, err := New(p, time.Hour, true)
+	reloaded, err := New(p, time.Hour, true, "")
 	require.NoError(t, err)
 	assert.Equal(t, 2, reloaded.Len())
 }
@@ -215,7 +215,7 @@ func TestDisabledIsNoop(t *testing.T) {
 		"https://pre/": {StatusCode: 200, State: model.StateAlive, CheckedAt: time.Now()},
 	}})
 
-	c, err := New(p, time.Hour, false)
+	c, err := New(p, time.Hour, false, "")
 	require.NoError(t, err)
 	assert.False(t, c.Enabled())
 	assert.Equal(t, 0, c.Len())
@@ -241,7 +241,7 @@ func TestDisabledIsNoop(t *testing.T) {
 // no file existed.
 func TestDisabledSaveWritesNothing(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "cache.json")
-	c, err := New(p, time.Hour, false)
+	c, err := New(p, time.Hour, false, "")
 	require.NoError(t, err)
 	require.NoError(t, c.Save())
 
@@ -253,7 +253,7 @@ func TestDisabledSaveWritesNothing(t *testing.T) {
 // nil error, so a corrupt cache degrades to a cold run rather than failing it.
 func TestLoadIsLenient(t *testing.T) {
 	t.Run("missing", func(t *testing.T) {
-		c, err := New(filepath.Join(t.TempDir(), "nope.json"), time.Hour, true)
+		c, err := New(filepath.Join(t.TempDir(), "nope.json"), time.Hour, true, "")
 		require.NoError(t, err)
 		assert.Equal(t, 0, c.Len())
 	})
@@ -271,7 +271,7 @@ func TestLoadIsLenient(t *testing.T) {
 			p := filepath.Join(t.TempDir(), "cache.json")
 			require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 
-			c, err := New(p, time.Hour, true)
+			c, err := New(p, time.Hour, true, "")
 			require.NoError(t, err)
 			assert.Equal(t, 0, c.Len())
 
@@ -283,11 +283,11 @@ func TestLoadIsLenient(t *testing.T) {
 
 func TestEnabled(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "cache.json")
-	en, err := New(p, time.Hour, true)
+	en, err := New(p, time.Hour, true, "")
 	require.NoError(t, err)
 	assert.True(t, en.Enabled())
 
-	dis, err := New(p, time.Hour, false)
+	dis, err := New(p, time.Hour, false, "")
 	require.NoError(t, err)
 	assert.False(t, dis.Enabled())
 }
@@ -296,7 +296,7 @@ func TestEnabled(t *testing.T) {
 // goroutines Put/Get/Len while a Save snapshots concurrently.
 func TestConcurrentAccess(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "cache.json")
-	c, err := New(p, time.Hour, true)
+	c, err := New(p, time.Hour, true, "")
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
@@ -318,7 +318,7 @@ func TestConcurrentAccess(t *testing.T) {
 	require.NoError(t, c.Save())
 	assert.LessOrEqual(t, c.Len(), 8)
 
-	reloaded, err := New(p, time.Hour, true)
+	reloaded, err := New(p, time.Hour, true, "")
 	require.NoError(t, err)
 	assert.Equal(t, c.Len(), reloaded.Len())
 }

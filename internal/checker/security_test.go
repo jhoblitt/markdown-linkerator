@@ -2,6 +2,8 @@ package checker
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -11,6 +13,34 @@ import (
 	"github.com/jhoblitt/markdown-linkerator/internal/model"
 	"github.com/jhoblitt/markdown-linkerator/internal/testserver"
 )
+
+// TestCustomHeadersStrippedOnCrossOriginRedirect guards that configured custom
+// headers (which may carry {{env.*}} secrets) are not forwarded to a
+// cross-origin redirect target.
+func TestCustomHeadersStrippedOnCrossOriginRedirect(t *testing.T) {
+	var gotSecret string
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSecret = r.Header.Get("X-Secret")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer dest.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dest.URL+"/target", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	c := NewHTTPChecker(config.Resolved{
+		AliveStatusCodes: map[int]bool{200: true},
+		Timeout:          2 * time.Second,
+		MaxRedirects:     5,
+		HTTPHeaders: []config.HeaderRule{
+			{URLs: []string{origin.URL}, Headers: map[string]string{"X-Secret": "s3cr3t"}},
+		},
+	})
+	res := c.Check(context.Background(), model.Target{URL: origin.URL + "/", Kind: model.KindHTTP})
+	assert.Equal(t, model.StateAlive, res.State)
+	assert.Empty(t, gotSecret, "custom header must not leak to a cross-origin redirect target")
+}
 
 // TestRuleMatchesExactOrigin guards the credential-leak fix: header rules must
 // require an exact scheme+host origin (with a path boundary), never a raw string

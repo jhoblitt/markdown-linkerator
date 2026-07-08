@@ -1,6 +1,10 @@
 package report
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"sigs.k8s.io/yaml"
+)
 
 // jsonReport is the stable wire shape emitted in json format. It is decoupled
 // from model.Result so the output schema does not track internal struct
@@ -33,7 +37,9 @@ type jsonHost struct {
 	ObservedRPS float64 `json:"observedRps"`
 }
 
-func (c *Collector) renderJSON(s Summary) {
+// toWire projects a Summary onto the stable machine-readable shape shared by the
+// json and yaml formats.
+func toWire(s Summary) jsonReport {
 	jr := jsonReport{
 		Total:    s.Total,
 		Alive:    s.Alive,
@@ -48,7 +54,7 @@ func (c *Collector) renderJSON(s Summary) {
 		jr.Results = append(jr.Results, jsonResult{
 			File:       r.Target.SourceFile,
 			Line:       r.Target.Line,
-			URL:        r.Target.URL,
+			URL:        linkDisplay(r.Target),
 			State:      r.State.String(),
 			StatusCode: r.StatusCode,
 			Detail:     detailText(r),
@@ -63,8 +69,18 @@ func (c *Collector) renderJSON(s Summary) {
 			ObservedRPS: h.ObservedRPS,
 		})
 	}
+	return jr
+}
+
+func (c *Collector) renderJSON(s Summary) {
 	enc := json.NewEncoder(c.opts.Out)
 	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false) // keep URLs (& ? =) literal
-	_ = enc.Encode(jr)
+	_ = enc.Encode(toWire(s))
+}
+
+func (c *Collector) renderYAML(s Summary) {
+	if b, err := yaml.Marshal(toWire(s)); err == nil {
+		_, _ = c.opts.Out.Write(b)
+	}
 }

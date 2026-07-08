@@ -1,9 +1,12 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -109,14 +112,47 @@ func (c Config) Resolve() (Resolved, error) {
 	return r, nil
 }
 
+// CacheFingerprint is a stable digest of the request policy that affects a
+// cached result's validity (alive codes, custom headers incl. credentials,
+// user-agent, base URL, redirect cap). The on-disk cache is invalidated when it
+// changes, so results checked under one policy are not reused under another.
+func (r Resolved) CacheFingerprint() string {
+	h := sha256.New()
+	codes := make([]int, 0, len(r.AliveStatusCodes))
+	for c := range r.AliveStatusCodes {
+		codes = append(codes, c)
+	}
+	sort.Ints(codes)
+	fmt.Fprintf(h, "alive=%v;ua=%s;base=%s;redir=%d;mx=%t;", codes, r.UserAgent, r.ProjectBaseURL, r.MaxRedirects, r.MailtoCheckMX)
+	for _, rule := range r.HTTPHeaders {
+		urls := append([]string(nil), rule.URLs...)
+		sort.Strings(urls)
+		keys := make([]string, 0, len(rule.Headers))
+		for k := range rule.Headers {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		fmt.Fprintf(h, "hdr%v:", urls)
+		for _, k := range keys {
+			fmt.Fprintf(h, "%s=%s;", k, rule.Headers[k])
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
 // resolveMaxRetries folds the tcort `retryCount` into the retry limit: an
 // explicit maxRetries wins, else retryCount, else 4.
 func resolveMaxRetries(d Config) int {
 	if d.MaxRetries > 0 {
 		return d.MaxRetries
 	}
-	if n := Int(d.RetryCount, 0); n > 0 {
-		return n
+	// Honor an explicitly-set retryCount, including 0 (disable retries); only
+	// fall back to the default when it was never set.
+	if d.RetryCount != nil {
+		if *d.RetryCount < 0 {
+			return 0
+		}
+		return *d.RetryCount
 	}
 	return 4
 }

@@ -30,10 +30,12 @@ type Entry struct {
 	CheckedAt  time.Time   `json:"checkedAt"`
 }
 
-// file is the on-disk envelope: a schema version plus the key->Entry map.
+// file is the on-disk envelope: a schema version, a fingerprint of the
+// cache-relevant config, and the key->Entry map.
 type file struct {
-	Schema  int              `json:"schema"`
-	Entries map[string]Entry `json:"entries"`
+	Schema      int              `json:"schema"`
+	Fingerprint string           `json:"fingerprint,omitempty"`
+	Entries     map[string]Entry `json:"entries"`
 }
 
 // Cache is a TTL-checked, JSON-file-backed store of definitive check results.
@@ -44,21 +46,23 @@ type Cache struct {
 	entries map[string]Entry
 
 	// Set once by New and never mutated, so they are read without the lock.
-	path    string
-	ttl     time.Duration
-	enabled bool
+	path        string
+	ttl         time.Duration
+	enabled     bool
+	fingerprint string
 }
 
 // New builds a cache. When enabled it loads path if present; a missing,
 // unreadable, corrupt, or foreign-schema file is a warning that leaves the
 // cache empty, never an error — the cache is an optimization and must not fail
 // a run. When disabled it returns a no-op cache.
-func New(path string, ttl time.Duration, enabled bool) (*Cache, error) {
+func New(path string, ttl time.Duration, enabled bool, fingerprint string) (*Cache, error) {
 	c := &Cache{
-		entries: map[string]Entry{},
-		path:    path,
-		ttl:     ttl,
-		enabled: enabled,
+		entries:     map[string]Entry{},
+		path:        path,
+		ttl:         ttl,
+		enabled:     enabled,
+		fingerprint: fingerprint,
 	}
 	if !enabled {
 		return c, nil
@@ -68,8 +72,10 @@ func New(path string, ttl time.Duration, enabled bool) (*Cache, error) {
 		return c, nil // no prior cache (or unreadable): start cold
 	}
 	var f file
-	if json.Unmarshal(b, &f) != nil || f.Schema != schemaVersion {
-		return c, nil // corrupt or foreign schema: start cold
+	if json.Unmarshal(b, &f) != nil || f.Schema != schemaVersion || f.Fingerprint != fingerprint {
+		// corrupt, foreign schema, or a different request policy (headers, alive
+		// codes, user-agent): start cold so stale results are not reused.
+		return c, nil
 	}
 	if f.Entries != nil {
 		c.entries = f.Entries
@@ -144,7 +150,7 @@ func (c *Cache) Save() error {
 	}
 	c.mu.RUnlock()
 
-	b, err := json.MarshalIndent(file{Schema: schemaVersion, Entries: snapshot}, "", "  ")
+	b, err := json.MarshalIndent(file{Schema: schemaVersion, Fingerprint: c.fingerprint, Entries: snapshot}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal cache: %w", err)
 	}

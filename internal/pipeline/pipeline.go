@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
 
@@ -32,7 +33,13 @@ type Pipeline struct {
 
 	anchorMu    sync.Mutex
 	anchorCache map[string]map[string]bool // referenced markdown file -> anchor set
+
+	srcErrors atomic.Int64 // source files that could not be read/parsed
 }
+
+// SourceErrors reports how many input files could not be read or parsed. These
+// are run failures (unchecked documentation), not link failures.
+func (p *Pipeline) SourceErrors() int64 { return p.srcErrors.Load() }
 
 // New builds a Pipeline. The cache and collector are provided by the engine so
 // it can persist the cache and render the report around the run.
@@ -127,12 +134,14 @@ func (p *Pipeline) parseSource(ctx context.Context, src srcItem, d *dedup, jobsC
 		data, err = os.ReadFile(src.path)
 	}
 	if err != nil {
+		p.srcErrors.Add(1)
 		p.coll.Add(fatalResult(src.path, err))
 		return
 	}
 
 	fl, err := extract.ParseFile(src.path, data, p.cfg)
 	if err != nil {
+		p.srcErrors.Add(1)
 		p.coll.Add(fatalResult(src.path, err))
 		return
 	}
@@ -168,6 +177,7 @@ func (p *Pipeline) handleTarget(ctx context.Context, t model.Target, anchors map
 			p.coll.Add(r)
 		}
 		if job != nil {
+			p.coll.NetEnqueue()
 			_ = send(ctx, jobsCh, job)
 		}
 	}
@@ -219,6 +229,7 @@ func (p *Pipeline) fileAnchors(path string) (map[string]bool, error) {
 
 func (p *Pipeline) execute(ctx context.Context, job *model.CheckJob, d *dedup) {
 	res := p.http.Check(ctx, job.Sample)
+	p.coll.NetComplete()
 	hs := p.reg.Host(job.Host)
 	hs.Record(res.Retries)
 	switch {
@@ -229,8 +240,9 @@ func (p *Pipeline) execute(ctx context.Context, job *model.CheckJob, d *dedup) {
 	}
 	p.cache.Put(job.Key, res)
 
-	for _, occ := range d.complete(job.Key, res) {
-		p.coll.Add(resultFor(occ, res))
+	// The originating occurrence (index 0) is the real check; the rest reused it.
+	for i, occ := range d.complete(job.Key, res) {
+		p.coll.Add(resultFor(occ, res, i > 0))
 	}
 }
 

@@ -20,12 +20,13 @@ import (
 // every non-crash return — including interrupted runs — so CI persists what it
 // checked.
 func Run(ctx context.Context, cfg config.Resolved, inputs []string, rep report.Options) (*report.Summary, error) {
-	c, err := cache.New(cfg.Cache.Path, cfg.Cache.TTL, cfg.Cache.Enabled)
+	c, err := cache.New(cfg.Cache.Path, cfg.Cache.TTL, cfg.Cache.Enabled, cfg.CacheFingerprint())
 	if err != nil {
 		return nil, fmt.Errorf("open cache: %w", err)
 	}
 
 	coll := report.NewCollector(cfg, rep)
+	coll.StartProgress()
 	p := pipeline.New(cfg, coll, c)
 
 	runErr := p.Run(ctx, inputs)
@@ -39,6 +40,11 @@ func Run(ctx context.Context, cfg config.Resolved, inputs []string, rep report.O
 	// did not finish must not report success.
 	if runErr == nil {
 		runErr = ctx.Err()
+	}
+	// Unreadable/unparseable input files are a run failure (documentation went
+	// unchecked), independent of --fail-on-error, so they never exit green.
+	if runErr == nil && p.SourceErrors() > 0 {
+		runErr = fmt.Errorf("%d source file(s) could not be read", p.SourceErrors())
 	}
 	if runErr != nil {
 		return &summary, runErr

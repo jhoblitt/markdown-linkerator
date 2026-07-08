@@ -52,9 +52,11 @@ don't fail unless `--fail-on-error`); `2` when a run is interrupted or exceeds
 `--max-time`.
 
 Because requests are paced per host, a large tree can take minutes. Progress is
-written to **stderr** so a run is never silently "hung": a throttled heartbeat by
-default, or a live per-link stream under `-v`. Pipe stdout to capture just the
-final report.
+written to **stderr** so a run is never silently "hung": a throttled heartbeat
+(printed at least every 10s, even while every worker is stalled in retry/backoff,
+and showing the in-flight backlog), or a live per-link stream under `-v`. Pipe
+stdout to capture just the final report. A URL is checked once per run; later
+occurrences are marked `(reused)`, and on-disk cache hits `(cached)`.
 
 ### Flags
 
@@ -78,7 +80,7 @@ final report.
 | `--cache` | `LINKERATOR_CACHE` | `false` | enable the on-disk result cache |
 | `--cache-path` | `LINKERATOR_CACHE_PATH` | `.linkerator-cache.json` | cache file |
 | `--cache-ttl` | `LINKERATOR_CACHE_TTL` | `24h` | cache entry TTL |
-| `--format` | `LINKERATOR_FORMAT` | `text` | `text` or `json` |
+| `--format` | `LINKERATOR_FORMAT` | `text` | `text`, `json`, or `yaml` |
 | `-q, --quiet` / `-v, --verbose` | | | quiet = failures only; verbose = show status codes |
 | `--fail-on-error` | `LINKERATOR_FAIL_ON_ERROR` | `false` | treat errored links as failures |
 | `--version` | | | print version and exit |

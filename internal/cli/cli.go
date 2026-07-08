@@ -69,7 +69,7 @@ func registerFlags(cmd *cobra.Command) {
 	f.BoolP("quiet", "q", false, "print only failing links")
 	f.BoolP("verbose", "v", false, "show status codes and detail")
 	f.BoolP("progress", "p", false, "show a progress indicator")
-	f.String("format", "text", "report format: text or json")
+	f.String("format", "text", "report format: text, json, or yaml")
 	f.Bool("no-color", false, "disable ANSI color")
 	f.String("report-json", "", "also write a JSON summary to this path")
 }

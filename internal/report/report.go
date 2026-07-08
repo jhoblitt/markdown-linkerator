@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/jhoblitt/markdown-linkerator/internal/config"
 	"github.com/jhoblitt/markdown-linkerator/internal/model"
@@ -50,11 +52,27 @@ type Collector struct {
 	mu      sync.Mutex
 	results []model.Result
 
+	// enqueued/netDone gauge in-flight network checks for the progress heartbeat;
+	// they are hot-path atomics updated by the pipeline outside the mutex.
+	enqueued atomic.Int64
+	netDone  atomic.Int64
+
 	live      liveProgress // live stderr feedback during the run
 	livePal   palette
 	liveOn    bool
 	streaming bool // Verbose: stream each link as it completes
+	stopTick  chan struct{}
+	tickDone  chan struct{}
 }
+
+// NetEnqueue records a dispatched network check for the in-flight gauge that the
+// heartbeat reports (so it stays informative during retry/backoff stalls).
+func (c *Collector) NetEnqueue() { c.enqueued.Add(1) }
+
+// NetComplete records a finished network check for the in-flight gauge.
+func (c *Collector) NetComplete() { c.netDone.Add(1) }
+
+func (c *Collector) inflight() int64 { return c.enqueued.Load() - c.netDone.Load() }
 
 // NewCollector returns a Collector that renders to opts.Out and uses cfg for
 // the exit-code policy (ErrorFailsRun).
@@ -63,15 +81,62 @@ func NewCollector(cfg config.Resolved, opts Options) *Collector {
 		opts.Out = io.Discard
 	}
 	c := &Collector{cfg: cfg, opts: opts}
-	// Live output is enabled unless quiet or JSON; Verbose streams each link,
-	// otherwise a throttled heartbeat keeps a long paced run from looking hung.
-	c.liveOn = opts.ProgressOut != nil && !opts.Quiet && opts.Format != "json"
+	// Live output is enabled unless quiet or a machine format; Verbose streams
+	// each link, otherwise a throttled heartbeat keeps a long paced run from
+	// looking hung.
+	c.liveOn = opts.ProgressOut != nil && !opts.Quiet && !machineFormat(opts.Format)
 	c.streaming = opts.Verbose
 	if c.liveOn {
 		c.livePal = newPalette(opts.NoColor)
 		c.live.init(opts.ProgressOut)
 	}
 	return c
+}
+
+func machineFormat(f string) bool {
+	switch f {
+	case "json", "yaml", "yml":
+		return true
+	default:
+		return false
+	}
+}
+
+// StartProgress launches the time-based heartbeat so status is emitted at least
+// every heartbeat interval even while every worker is stalled in retry/backoff
+// (when no results arrive to drive Add). The engine calls it before the run;
+// Finish stops it.
+func (c *Collector) StartProgress() {
+	if !c.liveOn {
+		return
+	}
+	c.stopTick = make(chan struct{})
+	c.tickDone = make(chan struct{})
+	go func() {
+		defer close(c.tickDone)
+		t := time.NewTicker(heartbeatTick)
+		defer t.Stop()
+		for {
+			select {
+			case <-c.stopTick:
+				return
+			case <-t.C:
+				c.mu.Lock()
+				c.live.inflight = c.inflight()
+				c.live.heartbeat(true)
+				c.mu.Unlock()
+			}
+		}
+	}()
+}
+
+func (c *Collector) stopProgress() {
+	if c.stopTick == nil {
+		return
+	}
+	close(c.stopTick)
+	<-c.tickDone
+	c.stopTick = nil
 }
 
 // Add records one result. It is safe for concurrent use by many workers. It
@@ -85,6 +150,7 @@ func (c *Collector) Add(r model.Result) {
 	}
 	c.live.checked++
 	if c.liveOn {
+		c.live.inflight = c.inflight()
 		if c.streaming {
 			c.live.streamLine(c.livePal, r)
 		} else {
@@ -112,12 +178,15 @@ func (c *Collector) Finish(hostStats []model.HostStat) Summary {
 	s := summarize(results, hosts, c.cfg.ErrorFailsRun)
 
 	if c.liveOn {
+		c.stopProgress()
 		c.live.clear()
 	}
 
 	switch c.opts.Format {
 	case "json":
 		c.renderJSON(s)
+	case "yaml", "yml":
+		c.renderYAML(s)
 	default:
 		c.renderText(s)
 	}
@@ -168,7 +237,11 @@ func (c *Collector) renderText(s Summary) {
 		return
 	}
 
-	c.renderFileGroups(w, p, s.Results)
+	// When Verbose streamed each link live, re-listing them all here would just
+	// duplicate that output; show the summary + failures digest instead.
+	if !c.liveOn || !c.streaming {
+		c.renderFileGroups(w, p, s.Results)
+	}
 
 	if c.opts.Quiet {
 		return
@@ -209,7 +282,7 @@ func linkDisplay(t model.Target) string {
 }
 
 func (c *Collector) renderLink(w io.Writer, p palette, r model.Result) {
-	line := "  " + colorGlyph(p, r.State) + " " + linkDisplay(r.Target)
+	line := "  " + colorGlyph(p, r.State) + " " + linkDisplay(r.Target) + reuseTag(r)
 	if c.opts.Verbose {
 		line += fmt.Sprintf(" → Status: %d", r.StatusCode)
 		if d := detailText(r); d != "" {

@@ -42,7 +42,7 @@ func (d *dedup) add(key string, t model.Target) (job *model.CheckJob, emit []mod
 			st = &urlState{done: true, result: resultFromCache(t, ent)}
 			d.seen[key] = st
 			d.mu.Unlock()
-			return nil, []model.Result{resultFor(t, st.result)}
+			return nil, []model.Result{resultFor(t, st.result, false)}
 		}
 		st = &urlState{occs: []model.Target{t}}
 		d.seen[key] = st
@@ -54,7 +54,7 @@ func (d *dedup) add(key string, t model.Target) (job *model.CheckJob, emit []mod
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if st.done {
-		return nil, []model.Result{resultFor(t, st.result)}
+		return nil, []model.Result{resultFor(t, st.result, true)}
 	}
 	st.occs = append(st.occs, t)
 	return nil, nil
@@ -77,13 +77,15 @@ func (d *dedup) complete(key string, res model.Result) []model.Target {
 
 // resultFor projects a canonical result onto a specific occurrence, preserving
 // the per-occurrence Target (file/line) while sharing the outcome fields.
-func resultFor(occ model.Target, base model.Result) model.Result {
+// reused marks a later occurrence that did not cost its own check.
+func resultFor(occ model.Target, base model.Result, reused bool) model.Result {
 	return model.Result{
 		Target:     occ,
 		State:      base.State,
 		StatusCode: base.StatusCode,
 		Host:       base.Host,
 		FromCache:  base.FromCache,
+		Reused:     reused,
 		Detail:     base.Detail,
 	}
 }

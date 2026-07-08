@@ -107,9 +107,10 @@ type Result struct {
 	Retries    int           // number of retries the checker performed
 	Saw429     bool          // a 429 was observed (drives the host AIMD penalty)
 	RetryAfter time.Duration // observed Retry-After, if any, for the host cooldown
-	FromCache  bool
-	Detail     string // human-readable extra context (error text, redirect chain)
-	Err        error  // fatal only; nil for an ordinary dead link
+	FromCache  bool          // served from the on-disk cache (a prior run)
+	Reused     bool          // a later occurrence that reused this run's in-memory result
+	Detail     string        // human-readable extra context (error text, redirect chain)
+	Err        error         // fatal only; nil for an ordinary dead link
 }
 
 // CheckJob is the unit dispatched from dedup to the host pacers and executor.
