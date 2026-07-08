@@ -1,6 +1,6 @@
 module github.com/jhoblitt/markdown-linkerator
 
-go 1.26.0
+go 1.26.5
 
 require (
 	github.com/hashicorp/go-retryablehttp v0.7.8
