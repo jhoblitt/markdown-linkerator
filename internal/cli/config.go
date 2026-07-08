@@ -72,6 +72,13 @@ func configFromEnv() config.Config {
 	if v, ok := lookString("LINKERATOR_USER_AGENT"); ok {
 		c.UserAgent = v
 	}
+	// Prefer an explicit LINKERATOR_GITHUB_TOKEN, else fall back to the standard
+	// $GITHUB_TOKEN that GitHub Actions injects, so auth is automatic in CI.
+	if v, ok := lookString("LINKERATOR_GITHUB_TOKEN"); ok {
+		c.GitHubToken = v
+	} else if v, ok := lookString("GITHUB_TOKEN"); ok {
+		c.GitHubToken = v
+	}
 	if v, ok := lookInt("LINKERATOR_MAX_REDIRECTS"); ok {
 		c.MaxRedirects = &v
 	}
@@ -143,6 +150,9 @@ func configFromFlags(cmd *cobra.Command) config.Config {
 	}
 	if fs.Changed("user-agent") {
 		c.UserAgent, _ = fs.GetString("user-agent")
+	}
+	if fs.Changed("github-token") {
+		c.GitHubToken, _ = fs.GetString("github-token")
 	}
 	if fs.Changed("max-redirects") {
 		v, _ := fs.GetInt("max-redirects")

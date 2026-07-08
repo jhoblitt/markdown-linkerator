@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/jhoblitt/markdown-linkerator/internal/config"
@@ -52,10 +51,12 @@ type Collector struct {
 	mu      sync.Mutex
 	results []model.Result
 
-	// enqueued/netDone gauge in-flight network checks for the progress heartbeat;
-	// they are hot-path atomics updated by the pipeline outside the mutex.
-	enqueued atomic.Int64
-	netDone  atomic.Int64
+	// Network-check gauges for the progress heartbeat, all under mu: enqueued
+	// counts dispatched jobs, netDone finished ones, and active tracks the URLs
+	// currently being checked (so a backoff stall names what it is waiting on).
+	enqueued int
+	netDone  int
+	active   map[string]*activeCheck
 
 	live      liveProgress // live stderr feedback during the run
 	livePal   palette
@@ -65,14 +66,66 @@ type Collector struct {
 	tickDone  chan struct{}
 }
 
-// NetEnqueue records a dispatched network check for the in-flight gauge that the
-// heartbeat reports (so it stays informative during retry/backoff stalls).
-func (c *Collector) NetEnqueue() { c.enqueued.Add(1) }
+// NetEnqueue records a dispatched network check (queued or in progress).
+func (c *Collector) NetEnqueue() {
+	c.mu.Lock()
+	c.enqueued++
+	c.mu.Unlock()
+}
 
-// NetComplete records a finished network check for the in-flight gauge.
-func (c *Collector) NetComplete() { c.netDone.Add(1) }
+// activeCheck is an in-progress network check: when it started and a note about
+// its current state (e.g. a retry/backoff), for the progress heartbeat.
+type activeCheck struct {
+	since time.Time
+	note  string
+}
 
-func (c *Collector) inflight() int64 { return c.enqueued.Load() - c.netDone.Load() }
+// NetStart records that a URL's network check has begun, so a stalled run can
+// report which URLs it is waiting on.
+func (c *Collector) NetStart(url string) {
+	c.mu.Lock()
+	c.active[url] = &activeCheck{since: time.Now()}
+	c.mu.Unlock()
+}
+
+// NetStatus annotates an in-progress check with why it is still running (e.g.
+// waiting out a 429 backoff), surfaced by the heartbeat.
+func (c *Collector) NetStatus(url, note string) {
+	c.mu.Lock()
+	if a := c.active[url]; a != nil {
+		a.note = note
+	}
+	c.mu.Unlock()
+}
+
+// NetComplete records a finished network check.
+func (c *Collector) NetComplete(url string) {
+	c.mu.Lock()
+	c.netDone++
+	delete(c.active, url)
+	c.mu.Unlock()
+}
+
+// updateGauges refreshes the heartbeat's in-flight count and the longest-running
+// active check. Caller holds mu.
+func (c *Collector) updateGauges() {
+	c.live.inflight = c.enqueued - c.netDone
+	c.live.oldestURL = ""
+	c.live.oldestNote = ""
+	c.live.moreActive = 0
+	if len(c.active) == 0 {
+		return
+	}
+	var oldest *activeCheck
+	for u, a := range c.active {
+		if oldest == nil || a.since.Before(oldest.since) {
+			c.live.oldestURL, oldest = u, a
+		}
+	}
+	c.live.oldestSince = oldest.since
+	c.live.oldestNote = oldest.note
+	c.live.moreActive = len(c.active) - 1
+}
 
 // NewCollector returns a Collector that renders to opts.Out and uses cfg for
 // the exit-code policy (ErrorFailsRun).
@@ -80,7 +133,7 @@ func NewCollector(cfg config.Resolved, opts Options) *Collector {
 	if opts.Out == nil {
 		opts.Out = io.Discard
 	}
-	c := &Collector{cfg: cfg, opts: opts}
+	c := &Collector{cfg: cfg, opts: opts, active: map[string]*activeCheck{}}
 	// Live output is enabled unless quiet or a machine format; Verbose streams
 	// each link, otherwise a throttled heartbeat keeps a long paced run from
 	// looking hung.
@@ -122,7 +175,7 @@ func (c *Collector) StartProgress() {
 				return
 			case <-t.C:
 				c.mu.Lock()
-				c.live.inflight = c.inflight()
+				c.updateGauges()
 				c.live.heartbeat(true)
 				c.mu.Unlock()
 			}
@@ -150,7 +203,7 @@ func (c *Collector) Add(r model.Result) {
 	}
 	c.live.checked++
 	if c.liveOn {
-		c.live.inflight = c.inflight()
+		c.updateGauges()
 		if c.streaming {
 			c.live.streamLine(c.livePal, r)
 		} else {

@@ -61,6 +61,7 @@ func registerFlags(cmd *cobra.Command) {
 	f.Bool("mailto-check-mx", false, "live MX lookup for mailto links")
 	f.String("project-base-url", "", "base URL for root-relative links ({{BASEURL}})")
 	f.String("user-agent", "", "User-Agent header")
+	f.String("github-token", "", "token for authenticated requests to GitHub hosts (defaults to $GITHUB_TOKEN)")
 	f.Int("max-redirects", 8, "maximum redirects to follow")
 	f.Bool("cache", false, "enable the on-disk result cache")
 	f.String("cache-path", ".linkerator-cache.json", "cache file path")

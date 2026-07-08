@@ -30,6 +30,9 @@ var errTooManyRedirects = errors.New("stopped after maximum redirects")
 type HTTPChecker struct {
 	cfg    config.Resolved
 	client *retryablehttp.Client
+	// OnRetry, if set, is called before each retry wait with the URL, attempt
+	// number, last status code, and the wait duration — for live progress.
+	OnRetry func(url string, attempt, statusCode int, wait time.Duration)
 }
 
 // NewHTTPChecker builds a checker with one shared, concurrency-safe HTTP client.
@@ -142,7 +145,27 @@ func (c *HTTPChecker) do(ctx context.Context, method string, t model.Target) (*h
 			break // first matching rule wins
 		}
 	}
+	// Authenticate to GitHub so a CI run is not throttled by the 60/hr
+	// unauthenticated limit (the usual cause of 429 backoff stalls). A user
+	// httpHeaders rule with Authorization takes precedence. Go strips
+	// Authorization on cross-origin redirects, so it never leaks off GitHub.
+	if c.cfg.GitHubToken != "" && req.Header.Get("Authorization") == "" {
+		if u, err := url.Parse(t.URL); err == nil && isGitHubHost(u.Hostname()) {
+			req.Header.Set("Authorization", "Bearer "+c.cfg.GitHubToken)
+		}
+	}
 	return c.client.Do(req)
+}
+
+// isGitHubHost reports whether host belongs to GitHub (including its raw/CDN
+// content hosts), where an authenticated request avoids the low unauthenticated
+// rate limit.
+func isGitHubHost(host string) bool {
+	host = strings.ToLower(host)
+	return host == "github.com" ||
+		strings.HasSuffix(host, ".github.com") ||
+		host == "githubusercontent.com" ||
+		strings.HasSuffix(host, ".githubusercontent.com")
 }
 
 func (c *HTTPChecker) checkRedirect(req *http.Request, via []*http.Request) error {
@@ -214,6 +237,14 @@ func (c *HTTPChecker) retryAfterTooLong(resp *http.Response) bool {
 // BackoffMax. The honored Retry-After is recorded on the request's retryState
 // for the pipeline's per-host cooldown.
 func (c *HTTPChecker) backoff(lo, hi time.Duration, attemptNum int, resp *http.Response) time.Duration {
+	wait := c.computeBackoff(lo, hi, attemptNum, resp)
+	if c.OnRetry != nil && resp != nil && resp.Request != nil {
+		c.OnRetry(resp.Request.URL.String(), attemptNum, resp.StatusCode, wait)
+	}
+	return wait
+}
+
+func (c *HTTPChecker) computeBackoff(lo, hi time.Duration, attemptNum int, resp *http.Response) time.Duration {
 	if resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable) {
 		if d, ok := parseRetryAfter(resp.Header.Get("Retry-After")); ok {
 			if resp.Request != nil {

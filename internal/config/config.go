@@ -75,6 +75,10 @@ type Config struct {
 	MailtoCheckMX bool                 `json:"mailtoCheckMX,omitempty"`
 	ErrorFailsRun bool                 `json:"errorFailsRun,omitempty"`
 	CheckExternal *bool                `json:"checkExternal,omitempty"`
+	// GitHubToken authenticates requests to GitHub hosts so a CI run is not
+	// throttled by the 60/hr unauthenticated limit. Never read from a config
+	// file (json:"-"); supply it via flag/env (defaulting to $GITHUB_TOKEN).
+	GitHubToken string `json:"-"`
 	// CheckFragments validates cross-file #anchors against the target file's
 	// anchors (stricter than markdown-link-check, which checks only existence).
 	CheckFragments *bool       `json:"checkFragments,omitempty"`
@@ -207,6 +211,9 @@ func (c *Config) Merge(src Config) {
 	}
 	if src.CheckFragments != nil {
 		c.CheckFragments = src.CheckFragments
+	}
+	if src.GitHubToken != "" {
+		c.GitHubToken = src.GitHubToken
 	}
 	if src.Cache.Enabled != nil {
 		c.Cache.Enabled = src.Cache.Enabled

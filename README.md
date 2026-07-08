@@ -51,6 +51,11 @@ Exit code is `1` when any link is **dead**, `0` otherwise (ignored/errored links
 don't fail unless `--fail-on-error`); `2` when a run is interrupted or exceeds
 `--max-time`.
 
+GitHub throttles unauthenticated requests to 60/hr, which is the usual cause of
+slow, retry-stalled runs on repos full of `github.com` links. The tool picks up
+`$GITHUB_TOKEN` automatically (set in every GitHub Actions job) and authenticates
+requests to GitHub hosts, lifting that limit — no config needed in CI.
+
 Because requests are paced per host, a large tree can take minutes. Progress is
 written to **stderr** so a run is never silently "hung": a throttled heartbeat
 (printed at least every 10s, even while every worker is stalled in retry/backoff,
@@ -77,6 +82,7 @@ occurrences are marked `(reused)`, and on-disk cache hits `(cached)`.
 | `--check-fragments` | `LINKERATOR_CHECK_FRAGMENTS` | `true` | validate cross-file `#anchors` (`false` = markdown-link-check parity) |
 | `--mailto-check-mx` | `LINKERATOR_MAILTO_CHECK_MX` | `false` | live MX lookup for mailto (default: syntax only) |
 | `--project-base-url` | `LINKERATOR_BASE_URL` | — | base for root-relative links (`{{BASEURL}}`) |
+| `--github-token` | `LINKERATOR_GITHUB_TOKEN` | `$GITHUB_TOKEN` | auth token for GitHub hosts (avoids the 60/hr unauthenticated rate limit) |
 | `--cache` | `LINKERATOR_CACHE` | `false` | enable the on-disk result cache |
 | `--cache-path` | `LINKERATOR_CACHE_PATH` | `.linkerator-cache.json` | cache file |
 | `--cache-ttl` | `LINKERATOR_CACHE_TTL` | `24h` | cache entry TTL |

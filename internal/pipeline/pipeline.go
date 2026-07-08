@@ -7,10 +7,12 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -44,9 +46,15 @@ func (p *Pipeline) SourceErrors() int64 { return p.srcErrors.Load() }
 // New builds a Pipeline. The cache and collector are provided by the engine so
 // it can persist the cache and render the report around the run.
 func New(cfg config.Resolved, coll *report.Collector, c *cache.Cache) *Pipeline {
+	http := checker.NewHTTPChecker(cfg)
+	// Surface retry/backoff waits so a stalled heartbeat reads as
+	// "waiting on X: HTTP 429, retrying in 30s" rather than a frozen counter.
+	http.OnRetry = func(url string, attempt, code int, wait time.Duration) {
+		coll.NetStatus(url, fmt.Sprintf("HTTP %d, retrying in %s (attempt %d)", code, wait.Round(time.Second), attempt+1))
+	}
 	return &Pipeline{
 		cfg:         cfg,
-		http:        checker.NewHTTPChecker(cfg),
+		http:        http,
 		reg:         ratelimit.NewRegistry(cfg),
 		cache:       c,
 		coll:        coll,
@@ -228,8 +236,9 @@ func (p *Pipeline) fileAnchors(path string) (map[string]bool, error) {
 }
 
 func (p *Pipeline) execute(ctx context.Context, job *model.CheckJob, d *dedup) {
+	p.coll.NetStart(job.Sample.URL)
 	res := p.http.Check(ctx, job.Sample)
-	p.coll.NetComplete()
+	p.coll.NetComplete(job.Sample.URL)
 	hs := p.reg.Host(job.Host)
 	hs.Record(res.Retries)
 	switch {

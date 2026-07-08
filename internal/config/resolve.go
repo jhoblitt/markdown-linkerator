@@ -39,6 +39,7 @@ type Resolved struct {
 	ErrorFailsRun  bool
 	CheckExternal  bool
 	CheckFragments bool
+	GitHubToken    string
 	Cache          ResolvedCache
 }
 
@@ -86,6 +87,7 @@ func (c Config) Resolve() (Resolved, error) {
 		ErrorFailsRun:      d.ErrorFailsRun,
 		CheckExternal:      Bool(d.CheckExternal),
 		CheckFragments:     Bool(d.CheckFragments),
+		GitHubToken:        d.GitHubToken,
 		Cache: ResolvedCache{
 			Enabled: Bool(d.Cache.Enabled),
 			Path:    d.Cache.Path,
@@ -123,7 +125,7 @@ func (r Resolved) CacheFingerprint() string {
 		codes = append(codes, c)
 	}
 	sort.Ints(codes)
-	fmt.Fprintf(h, "alive=%v;ua=%s;base=%s;redir=%d;mx=%t;", codes, r.UserAgent, r.ProjectBaseURL, r.MaxRedirects, r.MailtoCheckMX)
+	fmt.Fprintf(h, "alive=%v;ua=%s;base=%s;redir=%d;mx=%t;gh=%t;", codes, r.UserAgent, r.ProjectBaseURL, r.MaxRedirects, r.MailtoCheckMX, r.GitHubToken != "")
 	for _, rule := range r.HTTPHeaders {
 		urls := append([]string(nil), rule.URLs...)
 		sort.Strings(urls)

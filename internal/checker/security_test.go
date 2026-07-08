@@ -14,6 +14,44 @@ import (
 	"github.com/jhoblitt/markdown-linkerator/internal/testserver"
 )
 
+// TestIsGitHubHost guards which hosts receive the GitHub token — GitHub's own
+// hosts (including subdomains and content CDNs), never a look-alike.
+func TestIsGitHubHost(t *testing.T) {
+	for _, h := range []string{
+		"github.com", "api.github.com", "raw.githubusercontent.com",
+		"gist.github.com", "codeload.github.com", "objects.githubusercontent.com",
+	} {
+		assert.Truef(t, isGitHubHost(h), "%s should be a GitHub host", h)
+	}
+	for _, h := range []string{
+		"example.com", "github.com.evil.example", "notgithub.com",
+		"mygithub.com", "githubusercontent.com.evil.example",
+	} {
+		assert.Falsef(t, isGitHubHost(h), "%s must not be a GitHub host", h)
+	}
+}
+
+// TestGitHubTokenAttachedForGitHubHostsOnly verifies the token is sent to a
+// GitHub host but not to an arbitrary host.
+func TestGitHubTokenAttachedForGitHubHostsOnly(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewHTTPChecker(config.Resolved{
+		AliveStatusCodes: map[int]bool{200: true},
+		Timeout:          2 * time.Second,
+		MaxRedirects:     5,
+		GitHubToken:      "s3cr3t",
+	})
+	// The test server is not a GitHub host, so no token is attached.
+	c.Check(context.Background(), model.Target{URL: srv.URL + "/", Kind: model.KindHTTP})
+	assert.Empty(t, gotAuth, "token must not be sent to a non-GitHub host")
+}
+
 // TestCustomHeadersStrippedOnCrossOriginRedirect guards that configured custom
 // headers (which may carry {{env.*}} secrets) are not forwarded to a
 // cross-origin redirect target.

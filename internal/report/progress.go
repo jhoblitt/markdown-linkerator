@@ -13,14 +13,18 @@ import (
 // is in flight, so a paced multi-minute check is visibly working rather than
 // silent. It is only ever touched under the Collector's mutex.
 type liveProgress struct {
-	out      io.Writer
-	start    time.Time
-	last     time.Time
-	checked  int
-	dead     int
-	inflight int64 // network checks enqueued but not yet complete (the pending backlog)
-	tty      bool
-	shown    bool // whether a \r heartbeat line is currently on screen (TTY)
+	out         io.Writer
+	start       time.Time
+	last        time.Time
+	checked     int
+	dead        int
+	inflight    int       // network checks enqueued but not yet complete (the pending backlog)
+	oldestURL   string    // longest-running active check, named so a stall is legible
+	oldestSince time.Time // when that check started
+	oldestNote  string    // why it is still running (e.g. a 429 backoff)
+	moreActive  int       // other active checks besides oldestURL
+	tty         bool
+	shown       bool // whether a \r heartbeat line is currently on screen (TTY)
 }
 
 // heartbeatTick is how often the time-based heartbeat fires even when no results
@@ -73,6 +77,20 @@ func (l *liveProgress) heartbeat(force bool) {
 	l.last = now
 	elapsed := now.Sub(l.start).Round(time.Second)
 	msg := fmt.Sprintf("checking… %d checked · %d in-flight · %d dead · %s elapsed", l.checked, l.inflight, l.dead, elapsed)
+	// Name the longest-running active check once it has run a few seconds, so a
+	// retry/backoff stall reads as "waiting on X" rather than a frozen counter.
+	if l.oldestURL != "" {
+		if wait := now.Sub(l.oldestSince).Round(time.Second); wait >= 3*time.Second {
+			msg += fmt.Sprintf(" · waiting on %s (%s", l.oldestURL, wait)
+			if l.oldestNote != "" {
+				msg += "; " + l.oldestNote
+			}
+			msg += ")"
+			if l.moreActive > 0 {
+				msg += fmt.Sprintf(" +%d more", l.moreActive)
+			}
+		}
+	}
 	if l.tty {
 		fmt.Fprintf(l.out, "\r\033[K%s", msg)
 		l.shown = true
