@@ -37,6 +37,8 @@ type Summary struct {
 	Dead     int
 	Ignored  int
 	Errored  int
+	Cached   int              // results served from the on-disk cache (no network trip)
+	Reused   int              // results reused from an earlier occurrence in this run
 	ExitCode int              // 1 if Dead>0 or (ErrorFailsRun && Errored>0), else 0
 	Results  []model.Result   // sorted by SourceFile, then Line, then URL
 	Hosts    []model.HostStat // sorted by Host
@@ -276,6 +278,12 @@ func summarize(results []model.Result, hosts []model.HostStat, errorFails bool) 
 		case model.StateError:
 			s.Errored++
 		}
+		switch {
+		case r.FromCache:
+			s.Cached++
+		case r.Reused:
+			s.Reused++
+		}
 	}
 	if s.Dead > 0 || (errorFails && s.Errored > 0) {
 		s.ExitCode = 1
@@ -318,7 +326,14 @@ func (c *Collector) renderText(s Summary) {
 	}
 
 	renderHosts(w, p, s.Hosts)
-	fmt.Fprintf(w, "  %d link(s) checked.\n", s.Total)
+	checked := fmt.Sprintf("  %d link(s) checked", s.Total)
+	if s.Cached > 0 {
+		checked += fmt.Sprintf(" · %d from cache", s.Cached)
+	}
+	if s.Reused > 0 {
+		checked += fmt.Sprintf(" · %d reused", s.Reused)
+	}
+	fmt.Fprintln(w, checked+".")
 	if s.Dead > 0 {
 		renderDeadBlock(w, p, s)
 	}

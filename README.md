@@ -61,7 +61,9 @@ written to **stderr** so a run is never silently "hung": a throttled heartbeat
 (printed at least every 10s, even while every worker is stalled in retry/backoff,
 and showing the in-flight backlog), or a live per-link stream under `-v`. Pipe
 stdout to capture just the final report. A URL is checked once per run; later
-occurrences are marked `(reused)`, and on-disk cache hits `(cached)`.
+occurrences are marked `(reused)`, and on-disk cache hits `(cached)`. The final
+summary counts both (`… · N from cache · K reused`), so cache effectiveness
+across CI runs is visible at a glance.
 
 ### Flags
 
