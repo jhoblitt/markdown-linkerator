@@ -9,6 +9,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -28,17 +29,21 @@ type Pipeline struct {
 	reg   *ratelimit.Registry
 	cache *cache.Cache
 	coll  *report.Collector
+
+	anchorMu    sync.Mutex
+	anchorCache map[string]map[string]bool // referenced markdown file -> anchor set
 }
 
 // New builds a Pipeline. The cache and collector are provided by the engine so
 // it can persist the cache and render the report around the run.
 func New(cfg config.Resolved, coll *report.Collector, c *cache.Cache) *Pipeline {
 	return &Pipeline{
-		cfg:   cfg,
-		http:  checker.NewHTTPChecker(cfg),
-		reg:   ratelimit.NewRegistry(cfg),
-		cache: c,
-		coll:  coll,
+		cfg:         cfg,
+		http:        checker.NewHTTPChecker(cfg),
+		reg:         ratelimit.NewRegistry(cfg),
+		cache:       c,
+		coll:        coll,
+		anchorCache: map[string]map[string]bool{},
 	}
 }
 
@@ -147,7 +152,7 @@ func (p *Pipeline) handleTarget(ctx context.Context, t model.Target, anchors map
 	}
 	switch t.Kind {
 	case model.KindFileRel:
-		p.coll.Add(checker.CheckFile(t))
+		p.coll.Add(p.checkFileTarget(t))
 	case model.KindHashLocal:
 		p.coll.Add(checker.CheckHash(t, anchors))
 	case model.KindMailto:
@@ -166,6 +171,50 @@ func (p *Pipeline) handleTarget(ctx context.Context, t model.Target, anchors map
 			_ = send(ctx, jobsCh, job)
 		}
 	}
+}
+
+// checkFileTarget checks a relative/file link, additionally validating a
+// #fragment against the referenced markdown file's anchors so a broken
+// cross-file section link (./guide.md#missing) is reported dead rather than
+// passing on mere file existence.
+func (p *Pipeline) checkFileTarget(t model.Target) model.Result {
+	res := checker.CheckFile(t)
+	if res.State != model.StateAlive || t.Fragment == "" || !isMarkdown(t.URL) {
+		return res
+	}
+	anchors, err := p.fileAnchors(t.URL)
+	if err != nil {
+		return res // file exists (per CheckFile) but is unreadable now; keep alive
+	}
+	if hr := checker.CheckHash(t, anchors); hr.State != model.StateAlive {
+		return model.Result{
+			Target:     t,
+			State:      model.StateDead,
+			StatusCode: 404,
+			Detail:     "file exists but anchor #" + t.Fragment + " not found",
+		}
+	}
+	return res
+}
+
+// fileAnchors returns the anchor set for a referenced markdown file, parsing it
+// at most once per run.
+func (p *Pipeline) fileAnchors(path string) (map[string]bool, error) {
+	p.anchorMu.Lock()
+	a, ok := p.anchorCache[path]
+	p.anchorMu.Unlock()
+	if ok {
+		return a, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	a = extract.Anchors(data)
+	p.anchorMu.Lock()
+	p.anchorCache[path] = a
+	p.anchorMu.Unlock()
+	return a, nil
 }
 
 func (p *Pipeline) execute(ctx context.Context, job *model.CheckJob, d *dedup) {

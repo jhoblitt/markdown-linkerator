@@ -72,11 +72,7 @@ func registerFlags(cmd *cobra.Command) {
 }
 
 func run(ctx context.Context, cmd *cobra.Command, args []string, exitCode *int) error {
-	cfg, err := resolveConfig(cmd)
-	if err != nil {
-		return err
-	}
-	resolved, err := cfg.Resolve()
+	resolved, err := buildResolved(cmd)
 	if err != nil {
 		return err
 	}

@@ -56,9 +56,7 @@ func configFromEnv() config.Config {
 	if v, ok := lookDuration("LINKERATOR_RETRY_MAX_WAIT"); ok {
 		c.BackoffMax = config.NewDuration(v)
 	}
-	if v, ok := lookString("LINKERATOR_ALIVE_CODES"); ok {
-		c.AliveStatusCodes = csvInts(v)
-	}
+	// LINKERATOR_ALIVE_CODES is applied additively after Resolve (see aliveExtra).
 	if v, ok := lookBool("LINKERATOR_CHECK_EXTERNAL"); ok {
 		c.CheckExternal = &v
 	}
@@ -125,10 +123,7 @@ func configFromFlags(cmd *cobra.Command) config.Config {
 		d, _ := fs.GetDuration("retry-max-wait")
 		c.BackoffMax = config.NewDuration(d)
 	}
-	if fs.Changed("alive") {
-		s, _ := fs.GetString("alive")
-		c.AliveStatusCodes = csvInts(s)
-	}
+	// --alive is applied additively after Resolve (see aliveExtra).
 	if fs.Changed("check-external") {
 		v, _ := fs.GetBool("check-external")
 		c.CheckExternal = &v
@@ -161,6 +156,39 @@ func configFromFlags(cmd *cobra.Command) config.Config {
 		c.ErrorFailsRun, _ = fs.GetBool("fail-on-error")
 	}
 	return c
+}
+
+// buildResolved resolves the full configuration (defaults < file < env < flags)
+// and applies the additive alive-code codes on top.
+func buildResolved(cmd *cobra.Command) (config.Resolved, error) {
+	cfg, err := resolveConfig(cmd)
+	if err != nil {
+		return config.Resolved{}, err
+	}
+	resolved, err := cfg.Resolve()
+	if err != nil {
+		return config.Resolved{}, err
+	}
+	// --alive / LINKERATOR_ALIVE_CODES are "extra" codes: they extend the alive
+	// set (which already contains 200 or the config's list), never replace it —
+	// so `--alive 206` cannot turn a healthy 200 into a failure.
+	for _, code := range aliveExtra(cmd) {
+		resolved.AliveStatusCodes[code] = true
+	}
+	return resolved, nil
+}
+
+// aliveExtra returns the additive alive codes from the --alive flag or the
+// LINKERATOR_ALIVE_CODES env var (flag wins).
+func aliveExtra(cmd *cobra.Command) []int {
+	if cmd.Flags().Changed("alive") {
+		s, _ := cmd.Flags().GetString("alive")
+		return csvInts(s)
+	}
+	if v, ok := lookString("LINKERATOR_ALIVE_CODES"); ok {
+		return csvInts(v)
+	}
+	return nil
 }
 
 // boolValue resolves a bool report option: an explicitly-set flag wins, then the
