@@ -57,6 +57,7 @@ func registerFlags(cmd *cobra.Command) {
 	f.Duration("retry-max-wait", 2*time.Minute, "cap on the Retry-After wait")
 	f.StringP("alive", "a", "", "extra alive HTTP status codes (comma-separated)")
 	f.Bool("check-external", true, "check http(s) links (false = offline)")
+	f.Bool("check-fragments", true, "validate cross-file #anchors against the target file's anchors")
 	f.Bool("mailto-check-mx", false, "live MX lookup for mailto links")
 	f.String("project-base-url", "", "base URL for root-relative links ({{BASEURL}})")
 	f.String("user-agent", "", "User-Agent header")

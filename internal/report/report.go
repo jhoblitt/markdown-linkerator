@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/jhoblitt/markdown-linkerator/internal/config"
@@ -197,8 +198,18 @@ func (c *Collector) renderFileGroups(w io.Writer, p palette, results []model.Res
 	}
 }
 
+// linkDisplay renders a target for output, re-attaching a fragment to file
+// links (whose URL is the resolved path) so a failed cross-file anchor shows
+// which anchor, e.g. "guide.md#missing" rather than a bare "guide.md".
+func linkDisplay(t model.Target) string {
+	if t.Fragment != "" && !strings.Contains(t.URL, "#") {
+		return t.URL + "#" + t.Fragment
+	}
+	return t.URL
+}
+
 func (c *Collector) renderLink(w io.Writer, p palette, r model.Result) {
-	line := "  " + colorGlyph(p, r.State) + " " + r.Target.URL
+	line := "  " + colorGlyph(p, r.State) + " " + linkDisplay(r.Target)
 	if c.opts.Verbose {
 		line += fmt.Sprintf(" → Status: %d", r.StatusCode)
 		if d := detailText(r); d != "" {
@@ -227,7 +238,7 @@ func renderDeadBlock(w io.Writer, p palette, s Summary) {
 		if r.State != model.StateDead {
 			continue
 		}
-		fmt.Fprintf(w, "  %s %s → Status: %d\n", colorGlyph(p, r.State), r.Target.URL, r.StatusCode)
+		fmt.Fprintf(w, "  %s %s → Status: %d\n", colorGlyph(p, r.State), linkDisplay(r.Target), r.StatusCode)
 	}
 }
 

@@ -31,7 +31,7 @@ func (l *liveProgress) init(out io.Writer) {
 
 // streamLine prints one completed link as it happens (Verbose mode).
 func (l *liveProgress) streamLine(p palette, r model.Result) {
-	line := "  " + colorGlyph(p, r.State) + " " + r.Target.URL + fmt.Sprintf(" → Status: %d", r.StatusCode)
+	line := "  " + colorGlyph(p, r.State) + " " + linkDisplay(r.Target) + fmt.Sprintf(" → Status: %d", r.StatusCode)
 	if d := detailText(r); d != "" {
 		line += " — " + d
 	}

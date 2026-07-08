@@ -23,19 +23,20 @@ type Resolved struct {
 	IgnoreDisable       bool
 	ProjectBaseURL      string
 
-	PerHostRPS    float64
-	PerHostBurst  int
-	HostOverrides map[string]HostLimit
-	URLWorkers    int
-	ParseWorkers  int
-	MaxRetries    int
-	BackoffMax    time.Duration
-	UserAgent     string
-	MaxRedirects  int
-	MailtoCheckMX bool
-	ErrorFailsRun bool
-	CheckExternal bool
-	Cache         ResolvedCache
+	PerHostRPS     float64
+	PerHostBurst   int
+	HostOverrides  map[string]HostLimit
+	URLWorkers     int
+	ParseWorkers   int
+	MaxRetries     int
+	BackoffMax     time.Duration
+	UserAgent      string
+	MaxRedirects   int
+	MailtoCheckMX  bool
+	ErrorFailsRun  bool
+	CheckExternal  bool
+	CheckFragments bool
+	Cache          ResolvedCache
 }
 
 // CompiledReplacement is a pre-compiled replacementPattern. Replacement retains
@@ -81,6 +82,7 @@ func (c Config) Resolve() (Resolved, error) {
 		MailtoCheckMX:      d.MailtoCheckMX,
 		ErrorFailsRun:      d.ErrorFailsRun,
 		CheckExternal:      Bool(d.CheckExternal),
+		CheckFragments:     Bool(d.CheckFragments),
 		Cache: ResolvedCache{
 			Enabled: Bool(d.Cache.Enabled),
 			Path:    d.Cache.Path,

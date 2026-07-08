@@ -63,16 +63,22 @@ func TestCheckFile(t *testing.T) {
 }
 
 func TestCheckHash(t *testing.T) {
-	anchors := map[string]bool{"introduction": true, "bar-baz": true}
+	anchors := map[string]bool{
+		"introduction": true,
+		"bar-baz":      true,
+		// A verbatim, case-sensitive HTML id as emitted by CRD reference docs.
+		"ceph.rook.io/v1.CephCluster": true,
+	}
 	tests := []struct {
 		frag string
 		want model.State
 	}{
 		{"introduction", model.StateAlive},
-		{"#introduction", model.StateAlive}, // leading '#' stripped
-		{"Introduction", model.StateAlive},  // lowercased
-		{"bar%2Dbaz", model.StateAlive},     // percent-decoded ('-')
-		{"Bar-Baz", model.StateAlive},       // decode + lowercase
+		{"#introduction", model.StateAlive},               // leading '#' stripped
+		{"Introduction", model.StateAlive},                // lowercased slug match
+		{"bar%2Dbaz", model.StateAlive},                   // percent-decoded ('-')
+		{"Bar-Baz", model.StateAlive},                     // decode + lowercase
+		{"ceph.rook.io/v1.CephCluster", model.StateAlive}, // case-sensitive HTML id
 		{"missing", model.StateDead},
 		{"", model.StateDead},
 	}

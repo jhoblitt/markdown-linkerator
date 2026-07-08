@@ -60,6 +60,9 @@ func configFromEnv() config.Config {
 	if v, ok := lookBool("LINKERATOR_CHECK_EXTERNAL"); ok {
 		c.CheckExternal = &v
 	}
+	if v, ok := lookBool("LINKERATOR_CHECK_FRAGMENTS"); ok {
+		c.CheckFragments = &v
+	}
 	if v, ok := lookBool("LINKERATOR_MAILTO_CHECK_MX"); ok {
 		c.MailtoCheckMX = v
 	}
@@ -127,6 +130,10 @@ func configFromFlags(cmd *cobra.Command) config.Config {
 	if fs.Changed("check-external") {
 		v, _ := fs.GetBool("check-external")
 		c.CheckExternal = &v
+	}
+	if fs.Changed("check-fragments") {
+		v, _ := fs.GetBool("check-fragments")
+		c.CheckFragments = &v
 	}
 	if fs.Changed("mailto-check-mx") {
 		c.MailtoCheckMX, _ = fs.GetBool("mailto-check-mx")

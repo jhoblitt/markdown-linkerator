@@ -75,7 +75,10 @@ type Config struct {
 	MailtoCheckMX bool                 `json:"mailtoCheckMX,omitempty"`
 	ErrorFailsRun bool                 `json:"errorFailsRun,omitempty"`
 	CheckExternal *bool                `json:"checkExternal,omitempty"`
-	Cache         CacheConfig          `json:"cache,omitempty"`
+	// CheckFragments validates cross-file #anchors against the target file's
+	// anchors (stricter than markdown-link-check, which checks only existence).
+	CheckFragments *bool       `json:"checkFragments,omitempty"`
+	Cache          CacheConfig `json:"cache,omitempty"`
 }
 
 // DefaultUserAgent identifies the tool to servers.
@@ -102,6 +105,7 @@ func Defaults() Config {
 		UserAgent:          DefaultUserAgent,
 		MaxRedirects:       &eight,
 		CheckExternal:      &true_,
+		CheckFragments:     &true_,
 		Cache: CacheConfig{
 			Enabled: &false_,
 			Path:    ".linkerator-cache.json",
@@ -200,6 +204,9 @@ func (c *Config) Merge(src Config) {
 	}
 	if src.CheckExternal != nil {
 		c.CheckExternal = src.CheckExternal
+	}
+	if src.CheckFragments != nil {
+		c.CheckFragments = src.CheckFragments
 	}
 	if src.Cache.Enabled != nil {
 		c.Cache.Enabled = src.Cache.Enabled

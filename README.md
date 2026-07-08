@@ -72,6 +72,7 @@ final report.
 | `--retry-max-wait` | `LINKERATOR_RETRY_MAX_WAIT` | `2m` | cap on `Retry-After` wait |
 | `-a, --alive` | `LINKERATOR_ALIVE_CODES` | `200` | extra alive HTTP codes (CSV) |
 | `--check-external` | `LINKERATOR_CHECK_EXTERNAL` | `true` | check http(s) links (`false` = offline) |
+| `--check-fragments` | `LINKERATOR_CHECK_FRAGMENTS` | `true` | validate cross-file `#anchors` (`false` = markdown-link-check parity) |
 | `--mailto-check-mx` | `LINKERATOR_MAILTO_CHECK_MX` | `false` | live MX lookup for mailto (default: syntax only) |
 | `--project-base-url` | `LINKERATOR_BASE_URL` | — | base for root-relative links (`{{BASEURL}}`) |
 | `--cache` | `LINKERATOR_CACHE` | `false` | enable the on-disk result cache |

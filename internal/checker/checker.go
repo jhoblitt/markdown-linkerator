@@ -52,8 +52,10 @@ func CheckHash(t model.Target, anchors map[string]bool) model.Result {
 	if dec, err := url.PathUnescape(frag); err == nil {
 		frag = dec
 	}
-	frag = strings.ToLower(frag)
-	if anchors[frag] {
+	// HTML id/name anchors are case-sensitive and stored verbatim (e.g. the
+	// "ceph.rook.io/v1.CephCluster" ids in generated CRD reference docs), while
+	// GitHub heading slugs are lowercased. Accept a match against either form.
+	if anchors[frag] || anchors[strings.ToLower(frag)] {
 		res.State = model.StateAlive
 		res.StatusCode = 200
 	} else {

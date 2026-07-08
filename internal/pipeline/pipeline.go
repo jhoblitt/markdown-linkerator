@@ -179,7 +179,7 @@ func (p *Pipeline) handleTarget(ctx context.Context, t model.Target, anchors map
 // passing on mere file existence.
 func (p *Pipeline) checkFileTarget(t model.Target) model.Result {
 	res := checker.CheckFile(t)
-	if res.State != model.StateAlive || t.Fragment == "" || !isMarkdown(t.URL) {
+	if !p.cfg.CheckFragments || res.State != model.StateAlive || t.Fragment == "" || !isMarkdown(t.URL) {
 		return res
 	}
 	anchors, err := p.fileAnchors(t.URL)
